@@ -31,11 +31,17 @@ jobs:
         with:
           python-version: '3.14'
       - uses: gradle/actions/setup-gradle@v4
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+          log-accepted-android-sdk-licenses: 'false'
       - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y zsh ninja-build cmake clang lld libz-dev
           python3 -m pip install fonttools
+          sdkmanager --version
           sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358" "cmake;3.22.1"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
           printf 'sdk.dir=%s\n' "$ANDROID_HOME" > android/app/local.properties
