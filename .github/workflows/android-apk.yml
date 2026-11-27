@@ -1,0 +1,77 @@
+name: Android experimental APK
+
+on:
+  push:
+    branches: [fix/android12-vulkan-compat]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.114'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zsh ninja-build cmake clang lld libz-dev
+          python3 -m pip install fonttools
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358" "cmake;3.22.1"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+          printf 'sdk.dir=%s\n' "$ANDROID_HOME" > android/app/local.properties
+          echo "NX_PACK_STAGE=$RUNNER_TEMP/peanuts-packer/stage" >> "$GITHUB_ENV"
+      - name: Cache native packer
+        id: stage
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/peanuts-packer/stage
+          key: packer-linux-ndk28-dotnet10-v1-${{ hashFiles('android/ondevice/**', 'peanuts/scripts/ondevice-stage.sh', 'dm/peanuts/pack_worker/**', 'dm/gfx/tools/**', 'dm/third_party/ryujinx/**', 'dm/third_party/zstd-zbic/**') }}
+      - name: Build native packer
+        if: steps.stage.outputs.cache-hit != 'true'
+        run: zsh peanuts/scripts/ondevice-stage.sh "$RUNNER_TEMP/peanuts-packer"
+      - name: Test readiness
+        run: |
+          mkdir -p "$RUNNER_TEMP/readiness"
+          javac -Xlint:all -Werror -d "$RUNNER_TEMP/readiness" android/app/src/main/java/dev/nxnative/android/Readiness.java android/app/src/jvmtest/java/dev/nxnative/android/ReadinessJvmTest.java
+          java -cp "$RUNNER_TEMP/readiness" dev.nxnative.android.ReadinessJvmTest
+      - name: Build experimental APK
+        working-directory: android/app
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon --stacktrace -PnxApp=peanuts -PnxAppId=peanutsapi31 -PnxLabel="Peanuts Android 12 Test" -PnxMinSdk=31 -PnxGenericHost=true -PnxGames=010093801237C000,0100000000010000 apk
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: peanuts-android12-test
+          path: android/app/out/nxnative-android-peanuts.apk
+          if-no-files-found: error
+      - name: Upload build diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-diagnostics
+          path: |
+            ${{ runner.temp }}/peanuts-packer/*.log
+            ${{ runner.temp }}/peanuts-packer/build/*.log
+            ${{ runner.temp }}/peanuts-packer/spvtools/*.log
+          if-no-files-found: ignore
