@@ -59,6 +59,11 @@ public final class ReadinessJvmTest {
         check(f.get("driver.info").equals("v1 = one") && f.get("ram_gib").equals("14.7") && f.get("android.sdk").equals("36"), "facts: the first '=' splits; the launcher's own");
         List<Readiness.Check> l = Readiness.evaluate(f, rows);
         check(!Readiness.any(l, Readiness.Status.FAIL) && !Readiness.any(l, Readiness.Status.WARNING), "all present: " + l);
+        // Android 12 can use a Vulkan 1.3 device with a 1.1 loader; neither a 1.0 loader nor a 1.2 device qualifies.
+        String legacy = all.replace("vk.instance=1.4.0", "vk.instance=1.1.0").replace("vk.api=1.4.295", "vk.api=1.3.335");
+        check(!Readiness.any(Readiness.evaluate(Readiness.merge(legacy, 14.66, 31), rows), Readiness.Status.FAIL), "API 31 with 1.1 loader and 1.3 device");
+        check(find(Readiness.evaluate(Readiness.merge(legacy.replace("vk.instance=1.1.0", "vk.instance=1.0.0"), 14.66, 31), rows), "Vulkan 1.1 loader").status == Readiness.Status.FAIL, "1.0 loader rejected");
+        check(find(Readiness.evaluate(Readiness.merge(legacy.replace("vk.api=1.3.335", "vk.api=1.2.0"), 14.66, 31), rows), "Vulkan 1.3 GPU driver").status == Readiness.Status.FAIL, "1.2 GPU rejected");
         // PEANUTS begin: #47 advertised placed maps fail their guest-buffer remap; a tested alias still works.
         List<Readiness.Check> brokenMaps = Readiness.evaluate(Readiness.merge(all + "memory.placedUsable=0\nmemory.placedProbe=failed placed remap (-5)\n", 14.66, 36), rows);
         check(Readiness.any(brokenMaps, Readiness.Status.FAIL) && brokenMaps.stream().anyMatch(c -> c.status == Readiness.Status.FAIL && c.message.contains("remap test failed")), "advertised but unusable maps fail");
@@ -87,14 +92,16 @@ public final class ReadinessJvmTest {
         check(find(l, "Memory").status == Readiness.Status.FAIL && Readiness.of(l, Readiness.Status.WARNING).isEmpty(), "the degraded row of a failed fact is left out");
 
         // No Vulkan facts (no answer, or a host that cannot report): one warning, nothing called missing; the launcher's own facts still checked
+        l = Readiness.evaluate(Readiness.merge(null, 15, 30), game);
+        check(Readiness.of(l, Readiness.Status.FAIL).size() == 1 && find(l, "Android 12 or newer").status == Readiness.Status.FAIL && find(l, "GPU features").status == Readiness.Status.WARNING, "no facts: " + l);
         l = Readiness.evaluate(Readiness.merge(null, 15, 32), game);
-        check(Readiness.of(l, Readiness.Status.FAIL).size() == 1 && find(l, "Android 13 or newer").status == Readiness.Status.FAIL && find(l, "GPU features").status == Readiness.Status.WARNING, "no facts: " + l);
+        check(!Readiness.any(l, Readiness.Status.FAIL) && find(l, "GPU features").status == Readiness.Status.WARNING, "API 32 without GPU facts");
         l = Readiness.evaluate(Readiness.merge("unchecked=the GPU check did not answer in 8 s\n", 15, 36), game);
         check(!Readiness.any(l, Readiness.Status.FAIL) && find(l, "GPU features").message.contains("did not answer"), "a timeout is no failure: " + l);
         // The driver answered and failed: one failure
         l = Readiness.evaluate(Readiness.merge("error=vkCreateInstance returned -9\nvk.instance=1.3.0\n", 15, 36), game);
         check(find(l, "GPU features").status == Readiness.Status.FAIL && find(l, "GPU features").message.contains("vkCreateInstance returned -9")
-                && find(l, "Vulkan 1.3 loader").status == Readiness.Status.PASS && Readiness.of(l, Readiness.Status.FAIL).size() == 1, "an error line: " + l);
+                && find(l, "Vulkan 1.1 loader").status == Readiness.Status.PASS && Readiness.of(l, Readiness.Status.FAIL).size() == 1, "an error line: " + l);
 
         // Status and the driver's environment
         check(Readiness.status("playable") == null && Readiness.status("") == null && Readiness.status("bring-up").status == Readiness.Status.WARNING, "status");

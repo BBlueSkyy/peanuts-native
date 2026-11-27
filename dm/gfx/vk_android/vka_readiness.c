@@ -125,7 +125,9 @@ __attribute__((visibility("default"))) int nxhost_vk_readiness(char *buf, int n)
     put_ver(&o, "vk.instance", api);
     if (!vkCreateInstance) { put(&o, "error=no vkCreateInstance\n"); return 1; }
     VkApplicationInfo ai = {VK_STRUCTURE_TYPE_APPLICATION_INFO, .pApplicationName = "nxnative readiness", .pEngineName = "nxnative",
-                            .apiVersion = api >= VK_API_VERSION_1_3 ? VK_API_VERSION_1_3 : api >= VK_API_VERSION_1_1 ? VK_API_VERSION_1_1 : VK_API_VERSION_1_0};
+                            .apiVersion = api >= VK_API_VERSION_1_4 ? VK_API_VERSION_1_4 : api >= VK_API_VERSION_1_1 ? VK_API_VERSION_1_3 : VK_API_VERSION_1_0};
+    // Match replay: the application targets 1.3 even with an older 1.1/1.2 loader.
+    put_ver(&o, "vk.application", ai.apiVersion);
     VkInstanceCreateInfo ici = {VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, .pApplicationInfo = &ai};
     VkInstance inst; VkResult r = vkCreateInstance(&ici, NULL, &inst);
     if (r) { put(&o, "error=vkCreateInstance returned %d\n", r); return 1; }
