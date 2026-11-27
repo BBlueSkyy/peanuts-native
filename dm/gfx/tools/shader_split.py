@@ -2712,18 +2712,19 @@ def ue_legacy_jobs(files, parts=64, mains=()):
     def key(p):
         try: return key_of(p)
         except (OSError, ValueError, struct.error): return None
-    def inline(p):
-        try: return uepak.inline_shaders(p, key(p)) is True
-        except (OSError, ValueError, struct.error): return False
-    paks = [(p, r) for p, r in files if p.endswith('.pak') and inline(p)]
+    def sources(p):
+        try: return uepak.pak_shader_sources(p, key(p))
+        except (OSError, ValueError, struct.error): return False, False
+    paks = [(p, r, archives) for p, r in files if p.endswith('.pak')
+            for inline, archives in (sources(p),) if inline]
     if not paks: return [], set()
     view, keys = {}, {}
-    for p, r in sorted(paks, key=lambda x: (x[1].endswith('_P.pak'), x[1])):   # patch paks last, so they replace; one view per pak folder (one per version given)
+    for p, r, archives in sorted(paks, key=lambda x: (x[1].endswith('_P.pak'), x[1])):   # patch paks last, so they replace; one view per pak folder (one per version given)
         try:   # all of a pak's names or none: a patch pak read halfway would still replace the base pak's files
             keys[p] = key_of(p); pk = uepak.Pak(p, keys[p])
-            view.update({(os.path.dirname(p), posixpath.normpath(pk.mount + name)): (p, r, name, pk.entry(name)['raw']) for name in pk.files})   # PEANUTS(upstream-candidate): posixpath, pak paths use '/' on every host
+            view.update({(os.path.dirname(p), posixpath.normpath(pk.mount + name)): (p, r, name, pk.entry(name)['raw']) for name in pk.files if not (archives and name.endswith('.ushaderbytecode'))})   # PEANUTS: shared archives are handled by uepak.job
         except (OSError, ValueError) as e: print(f'[RED] /{r}: the pak cannot be read ({e}); its shaders are left out', flush=True)
-    chunks, taken, folders = {}, {p for p, _ in paks}, {os.path.dirname(p) for p, _ in paks}
+    chunks, taken, folders = {}, {p for p, _, _ in paks}, {os.path.dirname(p) for p, _, _ in paks}
     for p, r in sorted(((p, r) for p, r in files if p.endswith('.utoc') and os.path.dirname(p) in folders), key=lambda x: uepak.mount_order(x[0])):
         try: t = uepak.Toc(p)
         except (OSError, ValueError, struct.error) as e: print(f'[RED] /{r}: the container cannot be read ({e}); its shaders are left out', flush=True); continue
