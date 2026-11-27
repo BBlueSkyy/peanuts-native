@@ -64,7 +64,7 @@ jobs:
         working-directory: android/app
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon --stacktrace -PnxApp=peanuts -PnxAppId=peanutsapi31 -PnxLabel="Peanuts Android 12 Test" -PnxMinSdk=31 -PnxGenericHost=true -PnxGames=010093801237C000,0100000000010000 apk
+          ./gradlew --no-daemon --stacktrace -PnxApp=peanuts -PnxAppId=peanutsapi31 -PnxLabel="Peanuts Android 12 Test" -PnxMinSdk=31 -PnxGenericHost=true apk
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
