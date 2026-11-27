@@ -73,12 +73,14 @@ jobs:
         run: |
           python3 dm/tools/tests/test_ue_malloc.py
           python3 dm/tools/tests/test_peanuts_ue_v1.py
+      - name: Test Criterion bundle reader
+        run: python3 dm/tools/tests/test_split_bnd2.py
       - name: Build experimental APK
         working-directory: android/app
         run: |
           chmod +x gradlew
           # Keep the released catalogue intact and include experimental titles only in this APK.
-          games="$(sed -n 's/^nxGames=//p' gradle.properties),010092B0091D0000,01006CB010840000"
+          games="$(sed -n 's/^nxGames=//p' gradle.properties),010092B0091D0000,01006CB010840000,0100DBF01000A000"
           ./gradlew --no-daemon --stacktrace -PnxGames="$games" -PnxApp=peanuts -PnxAppId=peanutsapi31 -PnxLabel="Peanuts Android 12 Test" -PnxMinSdk=31 -PnxGenericHost=true apk
       - name: Sign APK with permanent key
         env:
