@@ -73,7 +73,9 @@ jobs:
         working-directory: android/app
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon --stacktrace -PnxApp=peanuts -PnxAppId=peanutsapi31 -PnxLabel="Peanuts Android 12 Test" -PnxMinSdk=31 -PnxGenericHost=true apk
+          # Keep the released catalogue intact and include Team Sonic Racing only in this experimental APK.
+          games="$(sed -n 's/^nxGames=//p' gradle.properties),010092B0091D0000"
+          ./gradlew --no-daemon --stacktrace -PnxGames="$games" -PnxApp=peanuts -PnxAppId=peanutsapi31 -PnxLabel="Peanuts Android 12 Test" -PnxMinSdk=31 -PnxGenericHost=true apk
       - name: Sign APK with permanent key
         env:
           PEANUTS_KEYSTORE_B64: ${{ secrets.PEANUTS_KEYSTORE_B64 }}
