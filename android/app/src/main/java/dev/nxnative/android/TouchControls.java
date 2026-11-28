@@ -3,6 +3,7 @@ package dev.nxnative.android;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.Canvas;
+import android.graphics.CornerPathEffect;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Path;
@@ -84,8 +85,8 @@ final class TouchControls extends View {
     private boolean editing;
     private int dragG = -1, dragId = -1, pinchId = -1;   // control index, or PICTURE
     private float lastX, lastY, pinchD0, pinchS0;
-    private final RectF[] tool = new RectF[5];   // the editor's buttons: Top, Centre, Bottom, Reset, Done
-    private static final String[] TOOL = {"Top", "Centre", "Bottom", "Reset", "Done"};
+    private final RectF[] tool = new RectF[7];   // editor tools, including selected-control size
+    private static final String[] TOOL = {"Top", "Centre", "Bottom", "Reset", "Done", "Size −", "Size +"};
 
     private final long[] pressed = new long[MAX], prev = new long[MAX];
     private final float[] sticks = new float[4];
@@ -466,6 +467,12 @@ final class TouchControls extends View {
         if (haptics) performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
         if (k <= 2) { placeY = k * 0.5f; relayout(); saveLayout(); }
         else if (k == 3) resetLayout();
+        else if (k >= 5) {
+            if (selected >= 0 && selected < n) {
+                zoom[selected] = Math.max(0.5f, Math.min(2f, zoom[selected] + (k == 5 ? -0.05f : 0.05f)));
+                relayout(); saveLayout();
+            }
+        }
         else { endEditLayout(); Native.note("on-screen controls: layout kept for screen " + prof + (custom() ? "" : " (the automatic one)")); }
         invalidate();
     }
@@ -558,11 +565,11 @@ final class TouchControls extends View {
     }
 
     private void surface(boolean held) {
-        fill.setColor(Color.argb(alpha(held ? 0.85f : 0.62f), 28, 28, 32));
+        fill.setColor(Color.argb(alpha(held ? 0.28f : 0.12f), 100, 100, 100));
     }
 
     private void edge() {
-        line.setColor(Color.argb(alpha(0.72f), 185, 185, 190));
+        line.setColor(Color.argb(alpha(0.85f), 230, 230, 230));
     }
 
     private void drawControls(Canvas c) {
@@ -576,7 +583,7 @@ final class TouchControls extends View {
                 edge();
                 if (shape[i] == SHAPE_SHOULDER) {
                     rect.set(x - rad, y - rad * 0.62f, x + rad, y + rad * 0.62f);
-                    c.drawRoundRect(rect, rad * 0.38f, rad * 0.38f, fill);
+                    c.drawRoundRect(rect, rad * 0.48f, rad * 0.48f, fill);
                     c.drawRoundRect(rect, rad * 0.38f, rad * 0.38f, line);
                 } else {
                     c.drawCircle(x, y, rad, fill);
@@ -603,24 +610,25 @@ final class TouchControls extends View {
             rect.set(cx[g] - r[g], cy[g] - ry, cx[g] + r[g], cy[g] + ry); rect.inset(-3 * u, -3 * u);
             c.drawRoundRect(rect, 6 * u, 6 * u, line);
         }
-        float bw = 74 * u, bh = 34 * u, gap = 8 * u, x = (w - (TOOL.length * bw + (TOOL.length - 1) * gap)) / 2, y = 14 * u;
-        text.setTextSize(15 * u);
+        float gap = 4 * u, bw = Math.min(74 * u, (w - 2 * gap - (TOOL.length - 1) * gap) / TOOL.length), bh = 34 * u, x = (w - (TOOL.length * bw + (TOOL.length - 1) * gap)) / 2, y = 14 * u;
+        text.setTextSize(Math.min(15 * u, bw * 0.22f));
         for (int k = 0; k < TOOL.length; k++, x += bw + gap) {
             if (tool[k] == null) tool[k] = new RectF();
             tool[k].set(x, y, x + bw, y + bh);
             boolean cur = k <= 2 && Math.abs(placeY - k * 0.5f) < 0.01f;
+            boolean disabled = k >= 5 && (selected < 0 || selected >= n);
             fill.setColor(k == 4 ? Color.argb(230, 255, 210, 60) : cur ? Color.argb(230, 255, 255, 255) : Color.argb(200, 40, 40, 40));
             c.drawRoundRect(tool[k], 8 * u, 8 * u, fill);
             line.setColor(Color.argb(220, 255, 255, 255));
             c.drawRoundRect(tool[k], 8 * u, 8 * u, line);
-            text.setColor(k == 4 || cur ? Color.BLACK : Color.WHITE);
+            text.setColor(disabled ? Color.GRAY : k == 4 || cur ? Color.BLACK : Color.WHITE);
             c.drawText(TOOL[k], tool[k].centerX(), tool[k].centerY() - (text.descent() + text.ascent()) / 2, text);
         }
         text.setTextSize(13 * u);
         text.setColor(Color.argb(230, 255, 255, 255));
         String hint = selected >= 0 && selected < n ? (kind[selected] == STICK ? (stick[selected] == 0 ? "Left stick" : "Right stick") : kind[selected] == DPAD ? "D-pad" : label[selected])
-                + ": drag to move, pinch to resize (" + Math.round(zoom[selected] * 100) + " %)"
-                : selected == PICTURE ? "Picture: drag into the black bars" : "Drag each control separately; pinch to resize";
+                + ": drag to move, Size −/+ or pinch (" + Math.round(zoom[selected] * 100) + " %)"
+                : selected == PICTURE ? "Picture: drag into the black bars" : "Select a control to move or resize";
         c.drawText(hint, w / 2f, y + bh + 22 * u, text);
     }
 
@@ -633,11 +641,14 @@ final class TouchControls extends View {
         c.drawCircle(x, y, rr, line);
         float k = rr * 0.43f;
         float px = x + sx * k, py = y - sy * k;
-        fill.setColor(Color.argb(alpha(0.92f), 52, 52, 57));
+        fill.setColor(Color.argb(alpha(0.30f), 100, 100, 100));
         edge();
         c.drawCircle(px, py, rr * 0.57f, fill);
         c.drawCircle(px, py, rr * 0.57f, line);
     }
+
+    private CornerPathEffect dpadCorners;
+    private float dpadCornerRadius = -1;
 
     private void drawDpad(Canvas c, int i) {
         float x = cx[i], y = cy[i], rr = r[i], a = rr * 0.34f;
@@ -648,17 +659,26 @@ final class TouchControls extends View {
         path.lineTo(x+a,y+rr); path.lineTo(x-a,y+rr);
         path.lineTo(x-a,y+a); path.lineTo(x-rr,y+a);
         path.lineTo(x-rr,y-a); path.lineTo(x-a,y-a); path.close();
+        float corner = rr * 0.12f;
+        if (corner != dpadCornerRadius) {
+            dpadCornerRadius = corner;
+            dpadCorners = new CornerPathEffect(corner);
+        }
         surface(false);
+        fill.setPathEffect(dpadCorners);
+        line.setPathEffect(dpadCorners);
         c.drawPath(path, fill);
         edge();
         c.drawPath(path, line);
+        fill.setPathEffect(null);
+        line.setPathEffect(null);
         for (int k = 0; k < 4; k++) {
             c.save();
             c.rotate(90 * k, x, y);
             if ((pressed[i] & DIRECTIONS[k]) != 0) {
-                fill.setColor(Color.argb(alpha(0.55f), 28, 28, 32));
-                rect.set(x-a, y-rr, x+a, y-a);
-                c.drawRect(rect, fill);
+                fill.setColor(Color.argb(alpha(0.18f), 100, 100, 100));
+                rect.set(x-a+rr*0.06f, y-rr+rr*0.06f, x+a-rr*0.06f, y-a);
+                c.drawRoundRect(rect, rr*0.10f, rr*0.10f, fill);
             }
             path.reset(); path.moveTo(x, y - rr * 0.78f);
             path.lineTo(x + rr * 0.13f, y - rr * 0.53f);
