@@ -1,0 +1,120 @@
+name: Android experimental APK
+
+on:
+  push:
+    branches: [fix/android12-vulkan-compat]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Check permanent signing configuration
+        env:
+          PEANUTS_KEYSTORE_B64: ${{ secrets.PEANUTS_KEYSTORE_B64 }}
+          PEANUTS_KEYSTORE_PASSWORD: ${{ secrets.PEANUTS_KEYSTORE_PASSWORD }}
+        run: |
+          if [[ -z "$PEANUTS_KEYSTORE_B64" || -z "$PEANUTS_KEYSTORE_PASSWORD" ]]; then
+            echo "::error::Configure PEANUTS_KEYSTORE_B64 and PEANUTS_KEYSTORE_PASSWORD in repository Actions secrets before building."
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.114'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+          log-accepted-android-sdk-licenses: 'false'
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zsh ninja-build cmake clang lld libz-dev
+          python3 -m pip install fonttools
+          sdkmanager --version
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358" "cmake;3.22.1"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+          printf 'sdk.dir=%s\n' "$ANDROID_HOME" > android/app/local.properties
+          echo "NX_PACK_STAGE=$RUNNER_TEMP/peanuts-packer/stage" >> "$GITHUB_ENV"
+      - name: Cache native packer
+        id: stage
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/peanuts-packer/stage
+          key: packer-linux-ndk28-dotnet10-v1-${{ hashFiles('android/ondevice/**', 'peanuts/scripts/ondevice-stage.sh', 'dm/peanuts/pack_worker/**', 'dm/gfx/tools/**', 'dm/third_party/ryujinx/**', 'dm/third_party/zstd-zbic/**') }}
+      - name: Build native packer
+        if: steps.stage.outputs.cache-hit != 'true'
+        run: zsh peanuts/scripts/ondevice-stage.sh "$RUNNER_TEMP/peanuts-packer"
+      - name: Test standalone DLC index
+        run: |
+          javac -Xlint:all -Werror -d "$RUNNER_TEMP/dlc" android/app/src/main/java/dev/nxnative/android/DlcStore.java android/app/src/jvmtest/java/dev/nxnative/android/DlcStoreJvmTest.java
+          java -cp "$RUNNER_TEMP/dlc" dev.nxnative.android.DlcStoreJvmTest
+      - name: Test readiness
+        run: |
+          mkdir -p "$RUNNER_TEMP/readiness"
+          javac -Xlint:all -Werror -d "$RUNNER_TEMP/readiness" android/app/src/main/java/dev/nxnative/android/Readiness.java android/app/src/jvmtest/java/dev/nxnative/android/ReadinessJvmTest.java
+          java -cp "$RUNNER_TEMP/readiness" dev.nxnative.android.ReadinessJvmTest
+      - name: Test Unreal profile tools
+        run: |
+          python3 dm/tools/tests/test_ue_malloc.py
+          python3 dm/tools/tests/test_peanuts_ue_v1.py
+      - name: Test Criterion bundle reader
+        run: python3 dm/tools/tests/test_split_bnd2.py
+      - name: Build experimental APK
+        working-directory: android/app
+        run: |
+          chmod +x gradlew
+          # Keep the released catalogue intact and include experimental titles only in this APK.
+          games="$(sed -n 's/^nxGames=//p' gradle.properties),010092B0091D0000,01006CB010840000,0100DBF01000A000,0100A250097F0000"
+          ./gradlew --no-daemon --stacktrace -PnxGames="$games" -PnxApp=peanuts -PnxAppId=peanutsapi31 -PnxLabel="Peanuts Android 12 Test" -PnxMinSdk=31 -PnxGenericHost=true apk
+      - name: Sign APK with permanent key
+        env:
+          PEANUTS_KEYSTORE_B64: ${{ secrets.PEANUTS_KEYSTORE_B64 }}
+          PEANUTS_KEYSTORE_PASSWORD: ${{ secrets.PEANUTS_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          ks="$(mktemp "$RUNNER_TEMP/peanuts-key.XXXXXX")"
+          trap 'rm -f "$ks"' EXIT
+          printf '%s' "$PEANUTS_KEYSTORE_B64" | base64 --decode > "$ks"
+          unset PEANUTS_KEYSTORE_B64
+          apk=android/app/out/nxnative-android-peanuts.apk
+          signer="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+          "$signer" sign --ks "$ks" --ks-type PKCS12 --ks-key-alias peanuts --ks-pass env:PEANUTS_KEYSTORE_PASSWORD --key-pass env:PEANUTS_KEYSTORE_PASSWORD --v4-signing-enabled false --out "$apk.signed" "$apk"
+          "$signer" verify --verbose --print-certs "$apk.signed"
+          mv "$apk.signed" "$apk"
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: peanuts-android12-test
+          path: android/app/out/nxnative-android-peanuts.apk
+          if-no-files-found: error
+      - name: Upload build diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-diagnostics
+          path: |
+            ${{ runner.temp }}/peanuts-packer/*.log
+            ${{ runner.temp }}/peanuts-packer/build/*.log
+            ${{ runner.temp }}/peanuts-packer/spvtools/*.log
+          if-no-files-found: ignore

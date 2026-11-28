@@ -133,7 +133,10 @@ static int init_once(void) {
     VKA_GLOBAL_FNS(G)
 #undef G
     uint32_t api = VK_API_VERSION_1_0; if (vk.vkEnumerateInstanceVersion) vk.vkEnumerateInstanceVersion(&api);
-    if (api < VK_API_VERSION_1_3) { VRED("Vulkan instance %u.%u: the replay needs 1.3", VK_API_VERSION_MAJOR(api), VK_API_VERSION_MINOR(api)); return 0; }
+    // Vulkan 1.1+ permits the application target to exceed the instance version. The device must still provide Vulkan 1.3.
+    if (api < VK_API_VERSION_1_1) { VRED("Vulkan instance %u.%u: the replay needs a 1.1 loader", VK_API_VERSION_MAJOR(api), VK_API_VERSION_MINOR(api)); return 0; }
+    const int legacy_loader = api < VK_API_VERSION_1_3;
+    if (legacy_loader) VLOG("Vulkan loader %u.%u: requesting application API 1.3; checking device support separately", VK_API_VERSION_MAJOR(api), VK_API_VERSION_MINOR(api));
     uint32_t ne = 0; vk.vkEnumerateInstanceExtensionProperties(NULL, &ne, NULL);
     VkExtensionProperties *ie = calloc(ne ? ne : 1, sizeof *ie); vk.vkEnumerateInstanceExtensionProperties(NULL, &ne, ie);
     const char *iext[4]; uint32_t niext = 0;
@@ -155,10 +158,16 @@ static int init_once(void) {
 #define I(f) vk.f = (PFN_##f)vk.vkGetInstanceProcAddr(V.inst, #f);
     VKA_INSTANCE_FNS(I)
 #undef I
+    if (legacy_loader && (!vk.vkGetPhysicalDeviceFeatures2 || !vk.vkGetPhysicalDeviceProperties2 || !vk.vkGetDeviceProcAddr || !vk.vkCreateDevice)) {
+        VRED("Vulkan 1.1 loader: missing required instance dispatch"); return 0;
+    }
     uint32_t npd = 1; VkPhysicalDevice pd[1];
     if (vk.vkEnumeratePhysicalDevices(V.inst, &npd, pd) < 0 || !npd) { VRED("no Vulkan physical device"); return 0; }
     V.pd = pd[0];
     vk.vkGetPhysicalDeviceProperties(V.pd, &V.props); vk.vkGetPhysicalDeviceMemoryProperties(V.pd, &V.memp);
+    VLOG("driver probe: %s; custom loader tag %s; GPU %s, API %u.%u.%u, driverVersion %#x",
+         vka_driver_load_status(), vka_driver_tag() ? vka_driver_tag() : "(none)", V.props.deviceName,
+         VK_API_VERSION_MAJOR(V.props.apiVersion), VK_API_VERSION_MINOR(V.props.apiVersion), VK_API_VERSION_PATCH(V.props.apiVersion), V.props.driverVersion);
     if (V.props.apiVersion < VK_API_VERSION_1_3) { VRED("device %s is Vulkan %u.%u: the replay needs 1.3", V.props.deviceName, VK_API_VERSION_MAJOR(V.props.apiVersion), VK_API_VERSION_MINOR(V.props.apiVersion)); return 0; }
     uint32_t nq = 0; vk.vkGetPhysicalDeviceQueueFamilyProperties(V.pd, &nq, NULL);
     VkQueueFamilyProperties *qp = calloc(nq ? nq : 1, sizeof *qp); vk.vkGetPhysicalDeviceQueueFamilyProperties(V.pd, &nq, qp);
@@ -290,6 +299,22 @@ static int init_once(void) {
 #define D(f) vk.f = (PFN_##f)vk.vkGetDeviceProcAddr(V.dev, #f);
     VKA_DEVICE_FNS(D)
 #undef D
+    // Do not run through a null dispatch on an older Android loader. Core device commands
+    // are legal here because the requested application API and physical device are both >= 1.3.
+    if (legacy_loader) {
+#define NEED(f) if (!vk.f) { VRED("Vulkan legacy loader: missing device command " #f); return 0; }
+        NEED(vkCmdBeginRendering) NEED(vkCmdEndRendering)
+        NEED(vkWaitSemaphores) NEED(vkSignalSemaphore) NEED(vkGetSemaphoreCounterValue)
+        NEED(vkGetImageMemoryRequirements2) NEED(vkCmdBindVertexBuffers2) NEED(vkCmdDispatchBase)
+        NEED(vkCmdSetCullMode) NEED(vkCmdSetFrontFace) NEED(vkCmdSetPrimitiveTopology)
+        NEED(vkCmdSetDepthTestEnable) NEED(vkCmdSetDepthWriteEnable) NEED(vkCmdSetDepthCompareOp)
+        NEED(vkCmdSetDepthBoundsTestEnable) NEED(vkCmdSetStencilTestEnable) NEED(vkCmdSetStencilOp)
+        NEED(vkCmdSetDepthBiasEnable) NEED(vkCmdSetRasterizerDiscardEnable) NEED(vkCmdSetPrimitiveRestartEnable)
+        if (V.bda) { NEED(vkGetBufferDeviceAddress) }
+        if (V.draw_count) { NEED(vkCmdDrawIndirectCount) NEED(vkCmdDrawIndexedIndirectCount) }
+#undef NEED
+        VLOG("Vulkan legacy loader: required promoted device commands resolved");
+    }
     if (!fm5.maintenance5) vk.vkCmdBindIndexBuffer2KHR = NULL;   // PEANUTS: bounded draw ranges
     else if (core_m5) vk.vkCmdBindIndexBuffer2KHR = (PFN_vkCmdBindIndexBuffer2KHR)vk.vkGetDeviceProcAddr(V.dev, "vkCmdBindIndexBuffer2");
     VLOG("bounded index buffer bindings: %s", vk.vkCmdBindIndexBuffer2KHR ? (core_m5 ? "core 1.4" : "KHR_maintenance5") : "unavailable");

@@ -339,6 +339,35 @@ def archive(b, what='shader code archive') -> dict:
     indices = list(r.array('I', r.take('<I')))
     return dict(maps=maps, shaders=shaders, indices=indices, code=r.o)
 
+def archive_v1_decoded(b, what):
+    """Normalize the v1 table of hashes and stored or Zlib-compressed Switch records to v2, without any shader maps."""
+    import zlib
+    r = R(b, what=what)
+    if r.take('<I') != 1: raise ValueError(f'{what}: expected a version 1 shader archive')
+    count, = r.array('I', 1)
+    r.need(37 * count)
+    code = r.o + 37 * count
+    hashes, entries, decoded = bytearray(), bytearray(), bytearray()
+    max_decoded = 1032 * (len(b) - code)   # the maximum Deflate expansion, also bounding repeated references to the same bytes
+    for i in range(count):
+        hashes.extend(r.raw(20))
+        off, size, raw, freq = r.take('<QIIB')
+        if (not 0 < size <= raw <= 32 << 20 or code + off + size > len(b) or freq not in FREQ
+                or raw > 1032 * size or len(decoded) + raw > max_decoded):
+            raise ValueError(f'{what}: invalid version 1 shader entry {i}')
+        shader = b[code + off:code + off + size]
+        if size != raw:
+            z = zlib.decompressobj()
+            try: shader = z.decompress(shader, raw + 1)
+            except zlib.error as e: raise ValueError(f'{what}: shader {i} does not decode ({e})') from None
+            if not z.eof or z.unused_data or len(shader) != raw:
+                raise ValueError(f'{what}: shader {i} does not decode to {raw:#x} bytes')
+        if not shader.startswith(b'LSLG'): raise ValueError(f'{what}: shader {i} is missing its LSLG header')
+        entries.extend(struct.pack('<QIIB', len(decoded), raw, raw, freq))
+        decoded.extend(shader)
+    return (struct.pack('<III', ARCHIVE_VERSION, 0, count) + hashes + struct.pack('<II', 0, count)
+            + entries + bytes(8) + decoded)
+
 # PEANUTS begin: a decoded Unreal archive can exceed 1.5 GB. Write its header and shaders directly to the working file.
 def write_decoded_archive(out, b, a, raws):
     """Keep the archive tables and serialize shader records in entry order with their uncompressed offsets and sizes."""
@@ -557,7 +586,7 @@ def inline_in_containers(path):
     tocs = [t for t in io_tocs(folder) if os.path.dirname(t.path) == folder]
     return any(t.export_bundles() for t in tocs) and not any(t.of_type(IO_SHADER_LIBRARY) for t in tocs)
 
-def inline_shaders(path, key=None):
+def _inline_shaders_legacy(path, key=None):
     """Whether a pak keeps its shaders inline in its cooked packages rather than in shader code archives: every legacy pak (DRAGON QUEST XI S), and a version 11 pak whose directory index
     names no .ushaderbytecode and either cooked packages (.uexp; OCTOPATH TRAVELER II: bShareMaterialShaderCode off) or the global shader cache with the cooked packages in the containers beside the pak
     (inline_in_containers; Mario & Luigi: Brothership and Yoshi and the Mysterious Book: the same setting with IoStore on). FINAL FANTASY RESONANCE's pak names the global shader cache too, but its
@@ -582,6 +611,25 @@ def inline_shaders(path, key=None):
     if b'GlobalShaderCache-' in d: return inline_in_containers(path)
     return None   # PEANUTS(upstream-candidate): movie and other asset-only paks do not require a shader archive decode
 
+def pak_shader_sources(path, key=None):
+    """Select inline and shared shader sources separately for v8 paks (Oceanhorn 2)."""
+    with open(path, 'rb') as f:
+        enc, _, _, _, ver = footer(f)
+    if ver == 8:
+        if enc and not key: return False, True
+        pak = Pak(path, key)
+        with pak.f:
+            archives = any(n.endswith('.ushaderbytecode') for n in pak.files)
+            members = any(n.endswith('.uexp') or posixpath.basename(n).startswith('GlobalShaderCache-') for n in pak.files)
+        # Keep the old inline scan for v8 paks without shared archives.
+        return not archives or members or inline_in_containers(path), archives
+    inline = _inline_shaders_legacy(path, key)
+    return inline is True, inline is False
+
+def inline_shaders(path, key=None):
+    inline, archives = pak_shader_sources(path, key)
+    return True if inline else False if archives else None
+
 def unreal_paks(romfs, inline=None, mains=()):
     """The paks under the RomFS that Unreal wrote (its magic in the footer; inline None = any, True = those whose shaders are inline in the cooked packages, False = those with shader code
     archives, inline_shaders; a pak that names no file is neither): the NSP script decodes the shader code archives (decode_ue_shaders); shader_split.py reads the inline ones file by file
@@ -590,9 +638,9 @@ def unreal_paks(romfs, inline=None, mains=()):
     for p in paks(romfs):
         try: k = keys(p) if mains else None
         except (OSError, ValueError, struct.error): k = None
-        try: inl = inline_shaders(p, k)
+        try: scan_inline, extract_archives = pak_shader_sources(p, k)
         except (OSError, ValueError, struct.error): continue   # shorter than a footer, or no Unreal pak
-        if inline is None or inl == inline: out.append(p)
+        if inline is None or (scan_inline if inline else extract_archives): out.append(p)
     return out
 
 def job(romfs, main_nso, work, decode=None):
@@ -620,11 +668,14 @@ def job(romfs, main_nso, work, decode=None):
     for pak in unreal_paks(romfs, inline=False, mains=[main_nso]):
         p = Pak(pak, keys(pak))
         for path in sorted(x for x in p.files if x.endswith('.ushaderbytecode')):
-            b = p.read(path); a = archive(b, f'{pak}: {path}'); name = os.path.basename(path)
+            b = p.read(path); what = f'{pak}: {path}'; name = os.path.basename(path)
+            v1 = b.startswith(b'\x01\0\0\0')
+            if v1: b = archive_v1_decoded(b, what)
+            a = archive(b, what)
             comp = [i for i, (_, size, raw, _) in enumerate(a['shaders']) if size != raw]
             # PEANUTS begin: the work file is private until finish succeeds. On an Oodle block, replace the partial LZ4 attempt with the original archive.
             target = os.path.join(work, 'archives', name)
-            how = 'Oodle' if comp else ''
+            how = 'v1, decoded' if v1 else 'Oodle' if comp else ''
             if comp:
                 try:
                     with open(target, 'wb') as f: write_decoded_archive(f, b, a, lz4_records(b, a))

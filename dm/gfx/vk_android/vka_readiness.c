@@ -36,6 +36,9 @@ static const char *const k_exts[] = {
     VK_EXT_INDEX_TYPE_UINT8_EXTENSION_NAME, VK_KHR_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME, VK_EXT_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME,
     VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME, VK_EXT_MESH_SHADER_EXTENSION_NAME, VK_GOOGLE_DISPLAY_TIMING_EXTENSION_NAME, VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME,
     VK_EXT_CUSTOM_BORDER_COLOR_EXTENSION_NAME, VK_EXT_DEPTH_CLIP_ENABLE_EXTENSION_NAME, VK_EXT_PROVOKING_VERTEX_EXTENSION_NAME, "VK_QCOM_queue_perf_hint",
+    VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME, VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME, VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
+    VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME, VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME, VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
+    VK_KHR_IMAGELESS_FRAMEBUFFER_EXTENSION_NAME, VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME, VK_EXT_EXTENDED_DYNAMIC_STATE_2_EXTENSION_NAME,
 };
 
 // Formats whose sparse residency decides how large sparse texture arrays are made (vka_tex.c: a format without it gets a dense image, capped by DM_VK_SPARSE_DENSE_MB)
@@ -46,7 +49,7 @@ static const struct { const char *name; VkFormat f; } k_sparse_fmt[] = {
 
 // PEANUTS: a temporary device probes guest-buffer remaps, including advertised support (#47), and the exported-alias fallback.
 // Unadvertised placed maps remain supported (vka_dev.c vka_placed_probe: Qualcomm 512.863).
-static int placed_memory_probe(PFN_vkGetInstanceProcAddr gipa, VkInstance inst, VkPhysicalDevice pd, int map2_ext, int fd_ext, int advertised, outbuf *o, int *fd_alias) {
+static int placed_memory_probe(PFN_vkGetInstanceProcAddr gipa, VkInstance inst, VkPhysicalDevice pd, int map2_ext, int fd_ext, int advertised, int core_bda, int bda_ext, outbuf *o, int *fd_alias) {
     const char *e = getenv("DM_VK_PLACED_PROBE"); int try_placed = !e || strcmp(e, "0");
 #define I(f) PFN_##f f = (PFN_##f)gipa(inst, #f);
     I(vkCreateDevice) I(vkGetDeviceProcAddr) I(vkGetPhysicalDeviceMemoryProperties)
@@ -54,18 +57,26 @@ static int placed_memory_probe(PFN_vkGetInstanceProcAddr gipa, VkInstance inst, 
 #undef I
     if (!vkCreateDevice || !vkGetDeviceProcAddr || !vkGetPhysicalDeviceMemoryProperties) { put(o, "memory.placedUsable=0\nmemory.placedProbe=missing device entry points\n"); return 0; }   // PEANUTS
     float prio = 1; VkDeviceQueueCreateInfo q = {VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, .queueFamilyIndex = 0, .queueCount = 1, .pQueuePriorities = &prio};
-    const char *exts[3]; uint32_t next = 0;   // PEANUTS: enable placed maps when advertised
+    const char *exts[4]; uint32_t next = 0;   // PEANUTS: enable placed maps when advertised
     if (map2_ext) exts[next++] = VK_KHR_MAP_MEMORY_2_EXTENSION_NAME;
     if (fd_ext) exts[next++] = VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME;
     if (advertised) exts[next++] = VK_EXT_MAP_MEMORY_PLACED_EXTENSION_NAME;   // PEANUTS
     VkPhysicalDeviceMapMemoryPlacedFeaturesEXT placed = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAP_MEMORY_PLACED_FEATURES_EXT};   // PEANUTS
     VkPhysicalDeviceBufferDeviceAddressFeatures bda = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES};
-    bda.pNext = advertised ? &placed : NULL;   // PEANUTS: query and enable advertised placed-map features
-    VkPhysicalDeviceFeatures2 features = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &bda};
-    if (vkGetPhysicalDeviceFeatures2) vkGetPhysicalDeviceFeatures2(pd, &features);
-    VkDeviceCreateInfo dci = {VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, .pNext = &bda, .queueCreateInfoCount = 1, .pQueueCreateInfos = &q,
+    // The promoted feature struct can only be used with core 1.2 or the enabled KHR extension.
+    const int query_bda = core_bda || bda_ext;
+    if (query_bda && !core_bda) exts[next++] = VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME;
+    bda.pNext = advertised ? &placed : NULL;
+    void *feature_chain = query_bda ? (void *)&bda : advertised ? (void *)&placed : NULL;
+    VkPhysicalDeviceFeatures2 features = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = feature_chain};
+    if (vkGetPhysicalDeviceFeatures2 && feature_chain) vkGetPhysicalDeviceFeatures2(pd, &features);
+    bda.bufferDeviceAddressCaptureReplay = VK_FALSE;
+    bda.bufferDeviceAddressMultiDevice = VK_FALSE;
+    VkDeviceCreateInfo dci = {VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, .pNext = feature_chain, .queueCreateInfoCount = 1, .pQueueCreateInfos = &q,
                              .enabledExtensionCount = next, .ppEnabledExtensionNames = exts};
-    VkDevice dev; if (vkCreateDevice(pd, &dci, NULL, &dev)) { put(o, "memory.placedUsable=0\nmemory.placedProbe=device creation failed\n"); return 0; }   // PEANUTS: do not pass an untested advertised feature
+    VkDevice dev; VkResult create_result = vkCreateDevice(pd, &dci, NULL, &dev);
+    put(o, "memory.probeDeviceResult=%d\n", (int)create_result);
+    if (create_result) { put(o, "memory.placedUsable=0\nmemory.placedProbe=device creation failed (%d)\n", (int)create_result); return 0; }   // PEANUTS: do not pass an untested advertised feature
 #define D(f) PFN_##f f = (PFN_##f)vkGetDeviceProcAddr(dev, #f);
     D(vkDestroyDevice)   // PEANUTS: the shared probe loads allocation functions below
 #undef D
@@ -125,7 +136,9 @@ __attribute__((visibility("default"))) int nxhost_vk_readiness(char *buf, int n)
     put_ver(&o, "vk.instance", api);
     if (!vkCreateInstance) { put(&o, "error=no vkCreateInstance\n"); return 1; }
     VkApplicationInfo ai = {VK_STRUCTURE_TYPE_APPLICATION_INFO, .pApplicationName = "nxnative readiness", .pEngineName = "nxnative",
-                            .apiVersion = api >= VK_API_VERSION_1_3 ? VK_API_VERSION_1_3 : api >= VK_API_VERSION_1_1 ? VK_API_VERSION_1_1 : VK_API_VERSION_1_0};
+                            .apiVersion = api >= VK_API_VERSION_1_4 ? VK_API_VERSION_1_4 : api >= VK_API_VERSION_1_1 ? VK_API_VERSION_1_3 : VK_API_VERSION_1_0};
+    // Match replay: the application targets 1.3 even with an older 1.1/1.2 loader.
+    put_ver(&o, "vk.application", ai.apiVersion);
     VkInstanceCreateInfo ici = {VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, .pApplicationInfo = &ai};
     VkInstance inst; VkResult r = vkCreateInstance(&ici, NULL, &inst);
     if (r) { put(&o, "error=vkCreateInstance returned %d\n", r); return 1; }
@@ -141,12 +154,15 @@ __attribute__((visibility("default"))) int nxhost_vk_readiness(char *buf, int n)
     put_str(&o, "gpu.name", p.deviceName);
     put(&o, "gpu.vendor=%#x\ngpu.device=%#x\ndriver.version=%#x\n", p.vendorID, p.deviceID, p.driverVersion);
     put_ver(&o, "vk.api", p.apiVersion);
+    put_str(&o, "driver.load", vka_driver_load_status());
     const int v12 = p.apiVersion >= VK_API_VERSION_1_2, v13 = p.apiVersion >= VK_API_VERSION_1_3;
 
     // Extensions
     uint32_t nde = 0; vkEnumerateDeviceExtensionProperties(pd, NULL, &nde, NULL);
     VkExtensionProperties *de = calloc(nde ? nde : 1, sizeof *de); vkEnumerateDeviceExtensionProperties(pd, NULL, &nde, de);
     int mesh = 0, placed = 0, map2_ext = 0, fd_ext = 0;
+    int driver_props = 0, timeline = 0, dynamic = 0, indexing = 0, bda_ext = 0, sync2 = 0;
+    int imageless_ext = 0, eds = 0, eds2 = 0;
     for (size_t k = 0; k < sizeof k_exts / sizeof *k_exts; k++)
         for (uint32_t i = 0; i < nde; i++) if (!strcmp(de[i].extensionName, k_exts[k])) {
             put(&o, "ext.%s=1\n", k_exts[k]);
@@ -154,15 +170,57 @@ __attribute__((visibility("default"))) int nxhost_vk_readiness(char *buf, int n)
             if (!strcmp(k_exts[k], VK_EXT_MAP_MEMORY_PLACED_EXTENSION_NAME)) placed = 1;
             if (!strcmp(k_exts[k], VK_KHR_MAP_MEMORY_2_EXTENSION_NAME)) map2_ext = 1;
             if (!strcmp(k_exts[k], VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME)) fd_ext = 1;
+            if (!strcmp(k_exts[k], VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME)) driver_props = 1;
+            if (!strcmp(k_exts[k], VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME)) timeline = 1;
+            if (!strcmp(k_exts[k], VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME)) dynamic = 1;
+            if (!strcmp(k_exts[k], VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME)) indexing = 1;
+            if (!strcmp(k_exts[k], VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME)) bda_ext = 1;
+            if (!strcmp(k_exts[k], VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME)) sync2 = 1;
+            if (!strcmp(k_exts[k], VK_KHR_IMAGELESS_FRAMEBUFFER_EXTENSION_NAME)) imageless_ext = 1;
+            if (!strcmp(k_exts[k], VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME)) eds = 1;
+            if (!strcmp(k_exts[k], VK_EXT_EXTENDED_DYNAMIC_STATE_2_EXTENSION_NAME)) eds2 = 1;
             break;
         }
     put(&o, "ext.count=%u\n", nde);
     free(de);
     // Placed maps the driver has but does not advertise count as present (the replay uses them the same way: vka_dev.c)
-    int fd_alias = 0, placed_ok = placed_memory_probe(gipa, inst, pd, map2_ext, fd_ext, placed, &o, &fd_alias);   // PEANUTS: probe advertised drivers too
+    int fd_alias = 0, placed_ok = placed_memory_probe(gipa, inst, pd, map2_ext, fd_ext, placed, v12, bda_ext, &o, &fd_alias);   // PEANUTS: probe advertised drivers too
     int placed_hidden = !placed && placed_ok;   // PEANUTS
     if (placed_hidden) put(&o, "ext.%s=1\next.%s=1\nplaced.unadvertised=1\n", VK_KHR_MAP_MEMORY_2_EXTENSION_NAME, VK_EXT_MAP_MEMORY_PLACED_EXTENSION_NAME);
 
+    // Driver identity is also legal on 1.1 through VK_KHR_driver_properties.
+    if (!v12 && driver_props && vkGetPhysicalDeviceProperties2) {
+        VkPhysicalDeviceDriverProperties dp = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
+        VkPhysicalDeviceProperties2 pp = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &dp};
+        vkGetPhysicalDeviceProperties2(pd, &pp);
+        put(&o, "driver.id=%d\n", (int)dp.driverID);
+        put_str(&o, "driver.name", dp.driverName); put_str(&o, "driver.info", dp.driverInfo);
+    }
+    // Probe the actual extension features on older devices. These are diagnostics, not the
+    // core feature facts: the replay still needs a Vulkan 1.3 device and does not enable these aliases.
+    if (!v13 && vkGetPhysicalDeviceFeatures2) {
+        VkPhysicalDeviceTimelineSemaphoreFeatures ts = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES};
+        VkPhysicalDeviceDynamicRenderingFeatures dr = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES};
+        VkPhysicalDeviceDescriptorIndexingFeatures di = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES};
+        VkPhysicalDeviceBufferDeviceAddressFeatures bd = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES};
+        VkPhysicalDeviceSynchronization2Features sy = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES};
+        VkPhysicalDeviceImagelessFramebufferFeatures im = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGELESS_FRAMEBUFFER_FEATURES};
+        VkPhysicalDeviceExtendedDynamicStateFeaturesEXT ds = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT};
+        VkPhysicalDeviceExtendedDynamicState2FeaturesEXT ds2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_2_FEATURES_EXT};
+        VkPhysicalDeviceFeatures2 ex = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+#define LEGACY_LINK(on, st) do { if (on) { (st).pNext = ex.pNext; ex.pNext = &(st); } } while (0)
+        LEGACY_LINK(!v12 && timeline, ts); LEGACY_LINK(dynamic, dr); LEGACY_LINK(!v12 && indexing, di);
+        LEGACY_LINK(!v12 && bda_ext, bd); LEGACY_LINK(sync2, sy);
+        LEGACY_LINK(v12 || imageless_ext, im); LEGACY_LINK(eds, ds); LEGACY_LINK(eds2, ds2);
+#undef LEGACY_LINK
+        if (ex.pNext) vkGetPhysicalDeviceFeatures2(pd, &ex);
+        put(&o, "legacy.timeline=%u\nlegacy.dynamicRendering=%u\nlegacy.descriptorIndexing=%u\nlegacy.bufferDeviceAddress=%u\nlegacy.synchronization2=%u\n",
+            ts.timelineSemaphore, dr.dynamicRendering,
+            di.runtimeDescriptorArray && di.descriptorBindingPartiallyBound && di.descriptorBindingSampledImageUpdateAfterBind ? 1u : 0u,
+            bd.bufferDeviceAddress, sy.synchronization2);
+        put(&o, "legacy.dynamicRenderingAdvertised=%d\nlegacy.imagelessFramebuffer=%u\nlegacy.extendedDynamicState=%u\nlegacy.extendedDynamicState2=%u\n",
+            dynamic, im.imagelessFramebuffer, ds.extendedDynamicState, ds2.extendedDynamicState2);
+    }
     // Driver identity (1.2 core) and the 1.1 / 1.3 properties the requirements may name
     if (v12 && vkGetPhysicalDeviceProperties2) {
         VkPhysicalDeviceVulkan13Properties p13 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_PROPERTIES};

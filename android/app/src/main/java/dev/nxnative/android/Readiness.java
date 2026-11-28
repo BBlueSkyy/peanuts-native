@@ -55,8 +55,8 @@ final class Readiness {
     /** What the host needs whatever the game: vka_dev.c stops without the first ones (Vulkan 1.3, the queue, timeline semaphores, dynamic rendering), and without
      *  placed memory maps, update-after-bind texture tables or a swapchain it runs but draws or shows nothing (its [RED] lines say so) */
     static final List<Req> HOST = Collections.unmodifiableList(List.of(
-            new Req(true, "android.sdk", "33", "Android 13 or newer: games need it (the app itself runs on Android 12)"),   // PEANUTS: Android 12 (the reason shows only when the row fails, below API 33)
-            new Req(true, "vk.instance", "1.3", "Vulkan 1.3 loader: the graphics replay is written for Vulkan 1.3"),
+            new Req(true, "android.sdk", "31", "Android 12 or newer: the launcher requires API 31"),
+            new Req(true, "vk.instance", "1.1", "Vulkan 1.1 loader: the application targets Vulkan 1.3 on the GPU"),
             new Req(true, "vk.api", "1.3", "Vulkan 1.3 GPU driver: the graphics replay is written for Vulkan 1.3"),
             new Req(true, "queue.graphicsCompute", "1", "A graphics and compute queue: everything is submitted to one such queue"),
             new Req(true, "feature.timelineSemaphore", "1", "Timeline semaphores: the game's fences are built on them"),
@@ -300,7 +300,31 @@ final class Readiness {
         if (!info.isEmpty()) s.append(" (").append(info).append(')');
         s.append(", driver ID ").append(f.getOrDefault("driver.id", "?")).append(", version ").append(f.getOrDefault("driver.version", "?"));
         String custom = f.getOrDefault("driver.custom", "");
-        s.append(custom.isEmpty() ? ", the system's driver" : ", custom driver " + custom);
+        String load = f.getOrDefault("driver.load", "");
+        if ("custom-loader-failed".equals(load)) s.append(", custom loader failed; system fallback");
+        else if ("custom-library-not-mapped".equals(load)) s.append(", custom driver ").append(custom).append(" (requested library not mapped)");
+        else {
+            s.append(custom.isEmpty() ? ", the system's driver" : ", custom driver " + custom);
+            if ("custom-library-mapped".equals(load)) s.append(" (library mapped)");
+            else if ("custom-mapping-unknown".equals(load)) s.append(" (mapping unknown)");
+        }
+        if (f.containsKey("legacy.dynamicRendering"))
+            s.append("; legacy extension features: timeline=").append(f.getOrDefault("legacy.timeline", "?"))
+             .append(", dynamicRendering=").append(f.get("legacy.dynamicRendering"))
+             .append(", descriptorIndexing=").append(f.getOrDefault("legacy.descriptorIndexing", "?"))
+             .append(", bufferDeviceAddress=").append(f.getOrDefault("legacy.bufferDeviceAddress", "?"))
+             .append(", synchronization2=").append(f.getOrDefault("legacy.synchronization2", "?"));
+        if (f.containsKey("legacy.imagelessFramebuffer")) {
+            s.append("; classic RP prerequisites: imageless=").append(f.get("legacy.imagelessFramebuffer"))
+             .append(", dynamicRenderingAdvertised=").append(f.getOrDefault("legacy.dynamicRenderingAdvertised", "?"))
+             .append(", extendedDynamicState=").append(f.getOrDefault("legacy.extendedDynamicState", "?"))
+             .append(", extendedDynamicState2=").append(f.getOrDefault("legacy.extendedDynamicState2", "?"))
+             .append("; guest memory: probeDevice=").append(f.getOrDefault("memory.probeDeviceResult", "?"))
+             .append(", placed=").append(f.getOrDefault("memory.placedUsable", "?"))
+             .append(" (").append(f.getOrDefault("memory.placedProbe", "not tested")).append(")")
+             .append(", fdAlias=").append(f.getOrDefault("memory.fdAlias", "?"))
+             .append(" (").append(f.getOrDefault("memory.fdAliasProbe", "not tested")).append(")");
+        }
         return s.toString();
     }
 

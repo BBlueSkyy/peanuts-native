@@ -54,6 +54,10 @@ class FindTest(unittest.TestCase):
         call, vt, slot, why = find(image())
         self.assertEqual((call, vt, slot), ((CALLER + 4,), VT, 19), why)   # PEANUTS: a tuple of calls (#290)
 
+    def test_ue424_layout(self):
+        call, vt, slot, why = find(image(slot=17, relocated=True))
+        self.assertEqual((call, vt, slot), ((CALLER + 4,), VT, 17), why)
+
     def test_found_through_relocations(self):
         call, vt, slot, why = find(image(slot=26, relocated=True))
         self.assertEqual((call, vt, slot), ((CALLER + 4,), VT, 26), why)   # PEANUTS: a tuple of calls (#290)

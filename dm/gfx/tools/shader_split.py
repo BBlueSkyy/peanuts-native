@@ -2712,18 +2712,19 @@ def ue_legacy_jobs(files, parts=64, mains=()):
     def key(p):
         try: return key_of(p)
         except (OSError, ValueError, struct.error): return None
-    def inline(p):
-        try: return uepak.inline_shaders(p, key(p)) is True
-        except (OSError, ValueError, struct.error): return False
-    paks = [(p, r) for p, r in files if p.endswith('.pak') and inline(p)]
+    def sources(p):
+        try: return uepak.pak_shader_sources(p, key(p))
+        except (OSError, ValueError, struct.error): return False, False
+    paks = [(p, r, archives) for p, r in files if p.endswith('.pak')
+            for inline, archives in (sources(p),) if inline]
     if not paks: return [], set()
     view, keys = {}, {}
-    for p, r in sorted(paks, key=lambda x: (x[1].endswith('_P.pak'), x[1])):   # patch paks last, so they replace; one view per pak folder (one per version given)
+    for p, r, archives in sorted(paks, key=lambda x: (x[1].endswith('_P.pak'), x[1])):   # patch paks last, so they replace; one view per pak folder (one per version given)
         try:   # all of a pak's names or none: a patch pak read halfway would still replace the base pak's files
             keys[p] = key_of(p); pk = uepak.Pak(p, keys[p])
-            view.update({(os.path.dirname(p), posixpath.normpath(pk.mount + name)): (p, r, name, pk.entry(name)['raw']) for name in pk.files})   # PEANUTS(upstream-candidate): posixpath, pak paths use '/' on every host
+            view.update({(os.path.dirname(p), posixpath.normpath(pk.mount + name)): (p, r, name, pk.entry(name)['raw']) for name in pk.files if not (archives and name.endswith('.ushaderbytecode'))})   # PEANUTS: shared archives are handled by uepak.job
         except (OSError, ValueError) as e: print(f'[RED] /{r}: the pak cannot be read ({e}); its shaders are left out', flush=True)
-    chunks, taken, folders = {}, {p for p, _ in paks}, {os.path.dirname(p) for p, _ in paks}
+    chunks, taken, folders = {}, {p for p, _, _ in paks}, {os.path.dirname(p) for p, _, _ in paks}
     for p, r in sorted(((p, r) for p, r in files if p.endswith('.utoc') and os.path.dirname(p) in folders), key=lambda x: uepak.mount_order(x[0])):
         try: t = uepak.Toc(p)
         except (OSError, ValueError, struct.error) as e: print(f'[RED] /{r}: the container cannot be read ({e}); its shaders are left out', flush=True); continue
@@ -3413,24 +3414,27 @@ def separable_pairs(keys):
 
 SMASH_ARC = struct.pack('<Q', 0xABCDEF9876543210)   # smash_arc.MAGIC (scan_file reads only the first bytes, without importing the reader)
 BND2 = b'bnd2'
+BND2_LAYOUTS = {2: (3, 0x40), 3: (4, 0x50)}   # Burnout Paradise / Hot Pursuit
 DRP = struct.pack('<I', 0x7F0E5359)   # drp.MAGIC, Crc32("DRPF") (scan_file reads only the first bytes, without importing the reader)   PEANUTS(upstream-candidate)
 
 def bnd2_resources(d, label):
-    """The resources of a Criterion Bundle 2 ('bnd2', Burnout Paradise's format; version 3 in Need for Speed: Hot Pursuit Remastered): → [(resource ID, type, block, data)].
-    Header: +0x04 version, +0x08 platform, +0x10 entry count, +0x14 entry table offset, +0x18 four block data offsets (u32), +0x28 flags (bit 0: resources zlib-compressed).
-    An entry is 0x50 bytes: +0x00 resource ID u64, +0x08 import hash u64, +0x10 four uncompressed sizes, +0x20 four sizes on disk (each with the alignment in the top
-    nibble), +0x30 four offsets (from that block's data offset), +0x40 import offset, +0x44 type ID, +0x48 import count u16, flags u8, stream index u8.
-    A resource has up to four blocks (0: main memory, 1: graphics memory). Hot Pursuit Remastered's SHADERS.BNDL keeps one whole GLSLC output in block 1 of each type 0x8 resource (2,112)"""
-    ver, _, _, cnt, eoff, *datoff, flags = field(d, '<10I', 4, f'{label}: bnd2 header')
-    table_end = eoff + cnt * 0x50
-    if ver not in (2, 3) or eoff < 0x30 or table_end > len(d): red(f'{label}: bnd2 version {ver} with {cnt} entries at {eoff:#x} is not a layout this reader knows')
+    """The resources of a Criterion Bundle 2 ('bnd2'; version 2 in Burnout Paradise Remastered, 3 in Need for Speed: Hot Pursuit Remastered): → [(resource ID, type, block, data)].
+    The version sets the number of blocks a resource has, B (BND2_LAYOUTS: 3 or 4), and every offset after the first array follows from it.
+    Header: +0x04 version, +0x08 platform, +0x10 entry count, +0x14 entry table offset, +0x18 B block data offsets (u32), then the flags (bit 0: resources zlib-compressed).
+    An entry (0x40 bytes in v2, 0x50 in v3): +0x00 resource ID u64, +0x08 import hash u64, +0x10 B uncompressed sizes, then B sizes on disk (each with the alignment in the top
+    nibble), then B offsets (from that block's data offset), then import offset, type ID, import count u16, flags u8, stream index u8.
+    Block 0 is main memory, block 1 graphics memory. Hot Pursuit Remastered's SHADERS.BNDL keeps one whole GLSLC output in block 1 of each type 0x8 resource (2,112)"""
+    ver, _, _, cnt, eoff = field(d, '<5I', 4, f'{label}: bnd2 header')
+    blocks, entry = BND2_LAYOUTS.get(ver, (0, 0))
+    table_end = eoff + cnt * entry
+    if not blocks or eoff < 0x30 or table_end > len(d): red(f'{label}: bnd2 version {ver} with {cnt} entries at {eoff:#x} is not a layout this reader knows')
+    *datoff, flags = field(d, f'<{blocks + 1}I', 0x18, f'{label}: bnd2 header')
     out = []
     for i in range(cnt):
-        e = eoff + i * 0x50
-        rid, = struct.unpack_from('<Q', d, e); typ, = struct.unpack_from('<I', d, e + 0x44)
-        unpacked = struct.unpack_from('<4I', d, e + 0x10)
-        sizes = struct.unpack_from('<4I', d, e + 0x20); offs = struct.unpack_from('<4I', d, e + 0x30)
-        for k in range(4):
+        e = eoff + i * entry
+        rid, = struct.unpack_from('<Q', d, e); typ, = struct.unpack_from('<I', d, e + 0x14 + 12 * blocks)
+        unpacked, sizes, offs = (struct.unpack_from(f'<{blocks}I', d, e + 0x10 + 4 * blocks * a) for a in range(3))
+        for k in range(blocks):
             n = sizes[k] & 0x0FFFFFFF; expected = unpacked[k] & 0x0FFFFFFF
             where = f'{label}: bnd2 resource {rid:016x} block {k}'
             if not n:

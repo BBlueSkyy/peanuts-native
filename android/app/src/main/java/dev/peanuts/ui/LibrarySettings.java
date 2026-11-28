@@ -31,7 +31,7 @@ import java.util.List;
 public final class LibrarySettings {
     static final String KEYS_FIRMWARE_GUIDANCE = "Firmware and keys should be the same version.";
     /** 61, 62 and 68 are the folder pickers of FolderKinds (games, updates and DLC, builds); 63 was the DLC folder's, a kind of its own before issue #546 */
-    static final int REQ_KEYS = 60, REQ_FIRMWARE = 64, REQ_SHEET_UPDATE = 65, REQ_SHEET_DLC = 66, REQ_FIRMWARE_ZIP = 67;
+    static final int REQ_KEYS = 60, REQ_DLC_FOLDER = 63, REQ_FIRMWARE = 64, REQ_SHEET_UPDATE = 65, REQ_SHEET_DLC = 66, REQ_FIRMWARE_ZIP = 67;
     /** dev.peanuts.settings.ModsSection's "Install mod…" (ACTION_OPEN_DOCUMENT_TREE / ACTION_OPEN_DOCUMENT), public: the section lives in another
      *  package and only needs these two request codes, not any other picker here */
     public static final int REQ_MOD_FOLDER = 69, REQ_MOD_ZIP = 70;
@@ -272,6 +272,7 @@ public final class LibrarySettings {
         Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT).setType(mime).addCategory(Intent.CATEGORY_OPENABLE);
         // A zip is not application/zip on every phone: a file manager or a download can label it x-zip-compressed, x-zip or plain octet-stream, and the
         // picker then greys it out so it cannot be chosen at all (GitHub issue #42 may be this). The importer says what a wrong file is
+        if (request == REQ_SHEET_DLC) i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
         if ("application/zip".equals(mime)) i.setType("*/*").putExtra(Intent.EXTRA_MIME_TYPES, ZIP_TYPES);
         i.putExtra(DocumentsContract.EXTRA_INITIAL_URI, Uri.parse("content://com.android.externalstorage.documents/document/primary%3A"));
         a.startActivityForResult(i, request);
@@ -318,6 +319,27 @@ public final class LibrarySettings {
             buildFolderFromSheet = false;
             LibraryFolders.picked(a, kind, p, none);
             if (sheet && p != null && GameSheet.current != null) GameSheet.current.chooseBuildFolder(dev.peanuts.folders.FolderList.clean(p));
+            return true;
+        }
+        if (request == REQ_SHEET_DLC || request == REQ_DLC_FOLDER) {
+            if (result != Activity.RESULT_OK || data == null || GameSheet.current == null) return true;
+            java.util.List<File> files = new java.util.ArrayList<>();
+            if (request == REQ_DLC_FOLDER) {
+                String path = data.getData() == null ? null : Upstream.treeToPath(data.getData());
+                File[] children = path == null ? null : new File(path).listFiles();
+                if (children == null) { error(a, "Choose a readable local DLC folder."); return true; }
+                for (File f : children) if (f.isFile()) files.add(f);
+            } else {
+                android.content.ClipData clip = data.getClipData();
+                int count = clip == null ? (data.getData() == null ? 0 : 1) : clip.getItemCount();
+                for (int n = 0; n < count; n++) {
+                    Uri uri = clip == null ? data.getData() : clip.getItemAt(n).getUri();
+                    String path = uri == null ? null : Upstream.documentToPath(uri);
+                    if (path == null || !new File(path).isFile()) { error(a, "Choose DLC files from local storage."); return true; }
+                    files.add(new File(path));
+                }
+            }
+            GameSheet.current.pickDlcs(files);
             return true;
         }
         if (result != Activity.RESULT_OK || data == null || data.getData() == null) return true;

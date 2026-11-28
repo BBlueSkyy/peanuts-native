@@ -77,6 +77,7 @@ One row per profile; the notes are each profile's `README.md`.
 | [Captain Tsubasa 2: World Fighters](01009720213B0000/README.md) | `01009720213B0000` | 1.0.6 | 18.3.1 | Unreal, Wwise | NVN <!-- PEANUTS: Peanuts-only profile --> |
 | [Captain Toad: Treasure Tracker](01009BF0072D4000/README.md) | `01009BF0072D4000` | 1.4.2 | 8.2.0 | Nintendo EPD Tokyo (`al` over sead / agl) | NVN |
 | [Castlevania: Belmont's Curse](0100BA4026E94000/README.md) | `0100BA4026E94000` | 1.1.0 | 19.3.16 | Unity 2022.3.62f2 IL2CPP, FMOD | NVN |
+| [Burnout Paradise Remastered](0100DBF01000A000/README.md) | `0100DBF01000A000` | 1.0.0 (base) | 9.3.0 | Criterion's engine | NVN <!-- PEANUTS: experimental Android profile --> |
 | [Catherine: Full Body](0100BF00112C0000/README.md) | `0100BF00112C0000` | 1.0.1a | 8.2.1 | Atlus GFD (CRI middleware) | NVN |
 | [Celeste](01002B30028F6000/README.md) | `01002B30028F6000` | 1.4.1.1 | 15.3.2 | MonoGame (C# → C++ by BRUTE) | NVN |
 | [Chained Echoes](0100C510166F0000/README.md) | `0100C510166F0000` | v1310720 | 14.3.0 | Unity 2020.3.36f1 IL2CPP | NVN |
@@ -154,6 +155,7 @@ One row per profile; the notes are each profile's `README.md`.
 | [Nintendo Switch Sports Resort](04008E001F098000/README.md) | `04008E001F098000` | v65536 (Switch 2) | 22.2.10 (Ounce) | sead / agl / gsys, Havok | NVN2 |
 | [OCTOPATH TRAVELER](010057D006492000/README.md) | `010057D006492000` | 1.0.5 | 3.5.1 | Unreal Engine 4.18 | NVN |
 | [Octopath Traveler 0](01005270232F2000/README.md) | `01005270232F2000` | 1.0.5 | 19.3.13 | Unreal Engine 5 | NVN |
+| [Oceanhorn 2: Knights of the Lost Realm](01006CB010840000/README.md) | `01006CB010840000` | 1.1 | 10.4.1 | Unreal Engine 4.24 | NVN <!-- PEANUTS: experimental Android profile --> |
 | [OCTOPATH TRAVELER II](0100A3501946E000/README.md) | `0100A3501946E000` | 1.1.1 | 12.3.2 | Unreal Engine 4.27 | NVN |
 | [Orbitals](040032B023CA4000/README.md) | `040032B023CA4000` | 1.1.2.0 (Switch 2) | 21.4.2 (Ounce) | Unreal Engine 5.6.1, Wwise, Bink 2 | NVN2 |
 | [Paper Mario: The Origami King](0100A3900C3E2000/README.md) | `0100A3900C3E2000` | 1.0.1 | 8.3.1 | Intelligent Systems' engine on NintendoWare | NVN |
