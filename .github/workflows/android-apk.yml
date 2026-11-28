@@ -80,7 +80,7 @@ jobs:
         run: |
           chmod +x gradlew
           # Keep the released catalogue intact and include experimental titles only in this APK.
-          games="$(sed -n 's/^nxGames=//p' gradle.properties),010092B0091D0000,01006CB010840000,0100DBF01000A000"
+          games="$(sed -n 's/^nxGames=//p' gradle.properties),010092B0091D0000,01006CB010840000,0100DBF01000A000,0100A250097F0000"
           ./gradlew --no-daemon --stacktrace -PnxGames="$games" -PnxApp=peanuts -PnxAppId=peanutsapi31 -PnxLabel="Peanuts Android 12 Test" -PnxMinSdk=31 -PnxGenericHost=true apk
       - name: Sign APK with permanent key
         env:
