@@ -561,9 +561,8 @@ final class TouchControls extends View {
         fill.setColor(Color.argb(alpha(held ? 0.85f : 0.62f), 28, 28, 32));
     }
 
-    private void edge(boolean accent) {
-        line.setColor(accent ? Color.argb(alpha(0.95f), 174, 125, 235)
-                : Color.argb(alpha(0.72f), 185, 185, 190));
+    private void edge() {
+        line.setColor(Color.argb(alpha(0.72f), 185, 185, 190));
     }
 
     private void drawControls(Canvas c) {
@@ -574,7 +573,7 @@ final class TouchControls extends View {
             else {
                 float rad = r[i], x = cx[i], y = cy[i];
                 surface(held);
-                edge(true);
+                edge();
                 if (shape[i] == SHAPE_SHOULDER) {
                     rect.set(x - rad, y - rad * 0.62f, x + rad, y + rad * 0.62f);
                     c.drawRoundRect(rect, rad * 0.38f, rad * 0.38f, fill);
@@ -629,13 +628,13 @@ final class TouchControls extends View {
         float sx = sticks[2 * stick[i]], sy = sticks[2 * stick[i] + 1];
         float rr = r[i], x = cx[i], y = cy[i];
         surface(false);
-        edge(false);
+        edge();
         c.drawCircle(x, y, rr, fill);
         c.drawCircle(x, y, rr, line);
         float k = rr * 0.43f;
         float px = x + sx * k, py = y - sy * k;
         fill.setColor(Color.argb(alpha(0.92f), 52, 52, 57));
-        edge(true);
+        edge();
         c.drawCircle(px, py, rr * 0.57f, fill);
         c.drawCircle(px, py, rr * 0.57f, line);
     }
@@ -651,7 +650,7 @@ final class TouchControls extends View {
         path.lineTo(x-rr,y-a); path.lineTo(x-a,y-a); path.close();
         surface(false);
         c.drawPath(path, fill);
-        edge(false);
+        edge();
         c.drawPath(path, line);
         for (int k = 0; k < 4; k++) {
             c.save();
