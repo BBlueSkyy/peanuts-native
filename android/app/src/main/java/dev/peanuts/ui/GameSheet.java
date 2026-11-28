@@ -164,6 +164,11 @@ public final class GameSheet {
         CharSequence dl = PUi.joined(names.isEmpty() ? "None found" : names.size() + " found: " + String.join(", ", names), "Add…");
         PUi.add(box, new PUi.Setting(a, "➕", "DLC", v -> { if (!building) { Haptics.play(v, Haptics.Word.TICK); new AlertDialog.Builder(a).setTitle("Add DLC").setItems(new String[]{"Select DLC files", "Select DLC folder"}, (d, which) -> { if (which == 0) LibrarySettings.pickFile(a, REQ_DLC, "Select DLC files (.nsp or .nsz)"); else LibrarySettings.pickFolder(a, LibrarySettings.REQ_DLC_FOLDER, "Choose a DLC folder"); }).show(); } }).value(dl).chevron(a).view, 0);
         if (!extraDlc.isEmpty()) PUi.add(box, PUi.button(a, "Forget the DLC you added", PUi.Kind.QUIET, v -> { Haptics.play(v, Haptics.Word.CLICK); extraDlc.clear(); saveDlc(); render(); }), 0, PUi.wrap());
+        if (ready && nupBase) {
+            View manage = PUi.button(a, "Manage DLC…", PUi.Kind.SOFT, v -> manageDlc());
+            manage.setEnabled(!building);
+            PUi.add(box, manage, 6, PUi.wrap());
+        }
         // Companion
         File root = title.companionRoot();
         String installed = companion == null ? null : CompanionPort.installedVersion(root, companion.packageName);
@@ -575,6 +580,52 @@ public final class GameSheet {
         if (why != null) { Haptics.play(box, Haptics.Word.REJECT); new AlertDialog.Builder(a).setTitle("Build").setMessage(why).setPositiveButton("OK", null).show(); return; }
         if (lib.building(title.titleId) || Library.queued(title.titleId) != null) Haptics.play(box, Haptics.Word.HEAVY);   // the build was accepted or queued (a refusal by the pipeline says so in its own dialog)
         dialog.dismiss();
+    }
+
+    private void manageDlc() {
+        final File game = title.base.file;
+        final String id = title.titleId;
+        final java.util.Map<Integer,String> installed;
+        try { installed = dev.nxnative.android.DlcStore.read(dev.nxnative.android.DlcStore.dir(a.getFilesDir(), id)); }
+        catch (Exception e) { new AlertDialog.Builder(a).setMessage(e.toString()).setPositiveButton("OK",null).show(); return; }
+        String note = PackNote.without(title.packDir) == null ? "" : "\nThis pack is missing some DLC shaders. Installing content alone will not supply those shaders.";
+        new AlertDialog.Builder(a).setTitle("Manage DLC")
+            .setMessage(installed.size()+" separately installed DLC. Install the DLC files found or selected above without rebuilding the game. Close the game before changing DLC."+note)
+            .setPositiveButton("Install DLC", (d,w) -> installDlc(game,id))
+            .setNeutralButton("Disable DLC…", (d,w) -> {
+                if (installed.isEmpty()) { Toast.makeText(a,"No separately installed DLC",Toast.LENGTH_SHORT).show(); return; }
+                java.util.List<Integer> ids = new ArrayList<>(installed.keySet());
+                String[] labels = new String[ids.size()];
+                for (int j=0;j<ids.size();j++) labels[j]="DLC "+ids.get(j);
+                new AlertDialog.Builder(a).setTitle("Disable DLC (keeps files)")
+                    .setItems(labels,(dd,i) -> {
+                        try { dev.peanuts.build.DlcInstall.disable(a,id,ids.get(i)); render(); Toast.makeText(a,"DLC disabled for next launch",Toast.LENGTH_SHORT).show(); }
+                        catch (Exception e) { new AlertDialog.Builder(a).setMessage(e.toString()).setPositiveButton("OK",null).show(); }
+                    }).setNegativeButton("Cancel",null).show();
+            }).setNegativeButton("Close",null).show();
+    }
+
+    private void installDlc(File game,String id) {
+        if (dev.peanuts.build.BuildPipeline.busy()) { Toast.makeText(a,"Finish the current build first",Toast.LENGTH_LONG).show(); return; }
+        final List<File> inputs = new ArrayList<>(state().dlcs);
+        if (inputs.isEmpty()) { Toast.makeText(a,"Add DLC files first",Toast.LENGTH_LONG).show(); return; }
+        final AlertDialog progress = new AlertDialog.Builder(a).setTitle("Installing DLC")
+            .setMessage("Importing only the add-on content. The game and its shaders are kept.").setCancelable(false).create();
+        progress.show();
+        new Thread(() -> {
+            int count=0; String error=null;
+            try { count=dev.peanuts.build.DlcInstall.install(a.getApplicationContext(),id,game,inputs); }
+            catch (Exception | LinkageError e) { error=e.toString(); }
+            final int done=count; final String why=error;
+            a.runOnUiThread(() -> {
+                if (a.isFinishing() || a.isDestroyed()) return;
+                progress.dismiss();
+                if (current==this) render();
+                new AlertDialog.Builder(a).setTitle(why==null?"DLC installation":"DLC installation failed")
+                    .setMessage(why==null ? done+" new DLC installed. Restart the game to use them. No rebuild was run." : why)
+                    .setPositiveButton("OK",null).show();
+            });
+        },"peanuts-install-dlc").start();
     }
 
     /** Validate selected packages off the UI thread using the existing CNMT probe. */

@@ -64,6 +64,10 @@ jobs:
       - name: Build native packer
         if: steps.stage.outputs.cache-hit != 'true'
         run: zsh peanuts/scripts/ondevice-stage.sh "$RUNNER_TEMP/peanuts-packer"
+      - name: Test standalone DLC index
+        run: |
+          javac -Xlint:all -Werror -d "$RUNNER_TEMP/dlc" android/app/src/main/java/dev/nxnative/android/DlcStore.java android/app/src/jvmtest/java/dev/nxnative/android/DlcStoreJvmTest.java
+          java -cp "$RUNNER_TEMP/dlc" dev.nxnative.android.DlcStoreJvmTest
       - name: Test readiness
         run: |
           mkdir -p "$RUNNER_TEMP/readiness"

@@ -1375,6 +1375,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
     private File aocLinks(File dir, File game, Pack pack, int nupFd) {
         List<String> skipped = new ArrayList<>();
         Map<String, String> links = pack.aocLinks(game, skipped);
+        DlcContainers.addLinks(DlcStore.dir(getFilesDir(), pack.titleId), pack.titleId, links, aocProblems);
         for (String p : skipped) aocProblems.add("[RED] [nxlaunch] DLC: " + p);
         for (String p : Pack.makeAocLinks(dir, links, t -> nupFd >= 0 ? PickedPath.forHost(t, game, nupFd) : t, (target, path) -> {
             try { Os.symlink(target, path); } catch (ErrnoException e) { throw new IOException(android.system.OsConstants.errnoName(e.errno) + " (" + e.getMessage() + ")"); }
