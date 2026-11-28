@@ -300,7 +300,20 @@ final class Readiness {
         if (!info.isEmpty()) s.append(" (").append(info).append(')');
         s.append(", driver ID ").append(f.getOrDefault("driver.id", "?")).append(", version ").append(f.getOrDefault("driver.version", "?"));
         String custom = f.getOrDefault("driver.custom", "");
-        s.append(custom.isEmpty() ? ", the system's driver" : ", custom driver " + custom);
+        String load = f.getOrDefault("driver.load", "");
+        if ("custom-loader-failed".equals(load)) s.append(", custom loader failed; system fallback");
+        else if ("custom-library-not-mapped".equals(load)) s.append(", custom driver ").append(custom).append(" (requested library not mapped)");
+        else {
+            s.append(custom.isEmpty() ? ", the system's driver" : ", custom driver " + custom);
+            if ("custom-library-mapped".equals(load)) s.append(" (library mapped)");
+            else if ("custom-mapping-unknown".equals(load)) s.append(" (mapping unknown)");
+        }
+        if (f.containsKey("legacy.dynamicRendering"))
+            s.append("; legacy extension features: timeline=").append(f.getOrDefault("legacy.timeline", "?"))
+             .append(", dynamicRendering=").append(f.get("legacy.dynamicRendering"))
+             .append(", descriptorIndexing=").append(f.getOrDefault("legacy.descriptorIndexing", "?"))
+             .append(", bufferDeviceAddress=").append(f.getOrDefault("legacy.bufferDeviceAddress", "?"))
+             .append(", synchronization2=").append(f.getOrDefault("legacy.synchronization2", "?"));
         return s.toString();
     }
 

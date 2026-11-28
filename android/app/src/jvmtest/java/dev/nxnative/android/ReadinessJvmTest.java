@@ -64,6 +64,11 @@ public final class ReadinessJvmTest {
         check(!Readiness.any(Readiness.evaluate(Readiness.merge(legacy, 14.66, 31), rows), Readiness.Status.FAIL), "API 31 with 1.1 loader and 1.3 device");
         check(find(Readiness.evaluate(Readiness.merge(legacy.replace("vk.instance=1.1.0", "vk.instance=1.0.0"), 14.66, 31), rows), "Vulkan 1.1 loader").status == Readiness.Status.FAIL, "1.0 loader rejected");
         check(find(Readiness.evaluate(Readiness.merge(legacy.replace("vk.api=1.3.335", "vk.api=1.2.0"), 14.66, 31), rows), "Vulkan 1.3 GPU driver").status == Readiness.Status.FAIL, "1.2 GPU rejected");
+        Map<String,String> custom = Readiness.merge(legacy.replace("driver.custom=\n", "driver.custom=Q777\n") + "driver.load=custom-library-mapped\nlegacy.dynamicRendering=0\nlegacy.timeline=1\n", 14.66, 31);
+        check(Readiness.gpu(custom).contains("Q777 (library mapped)") && Readiness.gpu(custom).contains("timeline=1"), "actual driver mapping and legacy diagnostics");
+        check(Readiness.gpu(Readiness.merge(all + "driver.load=custom-loader-failed\n", 14.66, 31)).contains("system fallback"), "explicit loader failure");
+        check(Readiness.gpu(Readiness.merge(all.replace("driver.custom=\n","driver.custom=Q777\n") + "driver.load=custom-library-not-mapped\n", 14.66, 31)).contains("requested library not mapped"), "hook fallback diagnostic");
+        check(Readiness.any(Readiness.evaluate(Readiness.merge(legacy.replace("vk.api=1.3.335","vk.api=1.1.276") + "legacy.dynamicRendering=1\nlegacy.timeline=1\nlegacy.descriptorIndexing=1\n", 14.66, 31), rows), Readiness.Status.FAIL), "legacy aliases cannot bypass core requirement");
         // PEANUTS begin: #47 advertised placed maps fail their guest-buffer remap; a tested alias still works.
         List<Readiness.Check> brokenMaps = Readiness.evaluate(Readiness.merge(all + "memory.placedUsable=0\nmemory.placedProbe=failed placed remap (-5)\n", 14.66, 36), rows);
         check(Readiness.any(brokenMaps, Readiness.Status.FAIL) && brokenMaps.stream().anyMatch(c -> c.status == Readiness.Status.FAIL && c.message.contains("remap test failed")), "advertised but unusable maps fail");

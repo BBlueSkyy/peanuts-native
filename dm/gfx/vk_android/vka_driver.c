@@ -22,9 +22,36 @@
 typedef void *(*open_libvulkan_fn)(int dlopen_mode, int feature_flags, const char *tmp_lib_dir, const char *hook_lib_dir, const char *custom_driver_dir,
                                    const char *custom_driver_name, const char *file_redirect_dir, void **user_mapping_handle);
 
+static char g_custom_path[1280]; // exact requested HAL, set before opening the private loader
 static char g_tag[96];   // the custom driver in use (file-name safe), empty for the system's
 
 const char *vka_driver_tag(void) { return g_tag[0] ? g_tag : NULL; }
+
+// A private libvulkan handle is not proof that its HAL hook succeeded: adrenotools can fall back
+// inside android_dlopen_ext. Check after physical-device enumeration, when the HAL is loaded.
+const char *vka_driver_load_status(void) {
+    const char *requested = getenv("DM_VK_DRIVER");
+    if (!requested || !*requested || !strcmp(requested, "system")) return "system";
+    if (!g_tag[0]) return "custom-loader-failed";
+    if (!g_custom_path[0]) return "custom-mapping-unknown";
+    char *resolved = realpath(g_custom_path, NULL);
+    const char *path = resolved ? resolved : g_custom_path;
+    size_t len = strlen(path);
+    FILE *f = fopen("/proc/self/maps", "r");
+    if (!f) { free(resolved); return "custom-mapping-unknown"; }
+    char *line = NULL; size_t cap = 0; int mapped = 0;
+    while (getline(&line, &cap, f) >= 0) {
+        // maps has five fields before the pathname; the path itself can contain spaces.
+        char *p = strchr(line, '/');
+        if (p && !strncmp(p, path, len) && (p[len] == '\n' || p[len] == '\0' || !strcmp(p + len, " (deleted)\n"))) {
+            mapped = 1; break;
+        }
+    }
+    int failed = ferror(f);
+    free(line); fclose(f); free(resolved);
+    return mapped ? "custom-library-mapped" : failed ? "custom-mapping-unknown" : "custom-library-not-mapped";
+}
+
 
 // "libraryName" from a driver folder's meta.json: the one string value the loader needs (a small JSON file; no parser for one key)
 static int meta_library(const char *dir, char *out, size_t cap) {
@@ -97,6 +124,8 @@ static void *driver_open(void) {
         snprintf(dir, sizeof dir, "%s%s", drv, drv[l - 1] == '/' ? "" : "/");
         if (!meta_library(drv, name, sizeof name)) { VRED("DM_VK_DRIVER=%s: no meta.json with a libraryName there: the system driver is used", drv); return NULL; }
     }
+    int path_len = snprintf(g_custom_path, sizeof g_custom_path, "%s%s", dir, name);
+    if (path_len < 0 || (size_t)path_len >= sizeof g_custom_path) g_custom_path[0] = 0;
     if (!strncmp(dir, "/sdcard/", 8) || !strncmp(dir, "/storage/", 9))   // shared storage is mounted without exec: dlopen fails there (adrenotools' own note)
         VRED("DM_VK_DRIVER=%s is on shared storage, where libraries cannot be loaded: install the driver from the launcher (it goes into the app's private files)", drv);
     char hook[1024];
