@@ -162,7 +162,7 @@ public final class GameSheet {
         for (LibraryScanner.Source d : title.dlcs) names.add(d.name.isEmpty() ? d.file.getName() : d.name);
         for (File f : extraDlc) { boolean known = false; for (LibraryScanner.Source d : title.dlcs) if (d.file.equals(f)) known = true; if (!known) names.add(f.getName()); }
         CharSequence dl = PUi.joined(names.isEmpty() ? "None found" : names.size() + " found: " + String.join(", ", names), "Add…");
-        PUi.add(box, new PUi.Setting(a, "➕", "DLC", v -> { if (!building) { Haptics.play(v, Haptics.Word.TICK); LibrarySettings.pickFile(a, REQ_DLC, "Pick a DLC (.nsp or .nsz)"); } }).value(dl).chevron(a).view, 0);
+        PUi.add(box, new PUi.Setting(a, "➕", "DLC", v -> { if (!building) { Haptics.play(v, Haptics.Word.TICK); new AlertDialog.Builder(a).setTitle("Add DLC").setItems(new String[]{"Select DLC files", "Select DLC folder"}, (d, which) -> { if (which == 0) LibrarySettings.pickFile(a, REQ_DLC, "Select DLC files (.nsp or .nsz)"); else LibrarySettings.pickFolder(a, LibrarySettings.REQ_DLC_FOLDER, "Choose a DLC folder"); }).show(); } }).value(dl).chevron(a).view, 0);
         if (!extraDlc.isEmpty()) PUi.add(box, PUi.button(a, "Forget the DLC you added", PUi.Kind.QUIET, v -> { Haptics.play(v, Haptics.Word.CLICK); extraDlc.clear(); saveDlc(); render(); }), 0, PUi.wrap());
         // Companion
         File root = title.companionRoot();
@@ -575,6 +575,40 @@ public final class GameSheet {
         if (why != null) { Haptics.play(box, Haptics.Word.REJECT); new AlertDialog.Builder(a).setTitle("Build").setMessage(why).setPositiveButton("OK", null).show(); return; }
         if (lib.building(title.titleId) || Library.queued(title.titleId) != null) Haptics.play(box, Haptics.Word.HEAVY);   // the build was accepted or queued (a refusal by the pipeline says so in its own dialog)
         dialog.dismiss();
+    }
+
+    /** Validate selected packages off the UI thread using the existing CNMT probe. */
+    void pickDlcs(List<File> files) {
+        if (lib.building(title.titleId)) return;
+        final GameSheet sheet = this;
+        Toast.makeText(a, "Checking DLC files…", Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            List<File> accepted = new ArrayList<>();
+            LibraryScanner scanner = new LibraryScanner(a);
+            for (File f : files) {
+                String name = f.getName().toLowerCase(Locale.ROOT);
+                if (!f.isFile() || !(name.endsWith(".nsp") || name.endsWith(".nsz"))) continue;
+                try {
+                    List<LibraryScanner.Source> sources = scanner.probe(f);
+                    boolean matches = !sources.isEmpty();
+                    for (LibraryScanner.Source source : sources)
+                        if (source.kind != LibraryScanner.DLC || !title.titleId.equalsIgnoreCase(source.appId)) matches = false;
+                    if (matches && !accepted.contains(f)) accepted.add(f);
+                } catch (RuntimeException ignored) { /* unreadable package */ }
+            }
+            a.runOnUiThread(() -> {
+                if (current != sheet || lib.building(title.titleId)) return;
+                int added = 0;
+                for (File f : accepted) {
+                    boolean known = extraDlc.contains(f);
+                    for (LibraryScanner.Source source : title.dlcs) if (source.file.equals(f)) known = true;
+                    if (!known) { extraDlc.add(f); added++; }
+                }
+                saveDlc();
+                render();
+                Toast.makeText(a, added + " DLC files added; " + (files.size() - accepted.size()) + " skipped", Toast.LENGTH_LONG).show();
+            });
+        }, "dlc-probe").start();
     }
 
     /** A picked file (LibrarySettings.result) for the Update and DLC rows */
