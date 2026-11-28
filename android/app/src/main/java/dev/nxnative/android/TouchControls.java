@@ -5,9 +5,6 @@ import android.content.SharedPreferences;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
-import android.graphics.LinearGradient;
-import android.graphics.Matrix;
-import android.graphics.Shader;
 import android.graphics.Path;
 import android.graphics.RectF;
 import android.util.TypedValue;
@@ -99,10 +96,6 @@ final class TouchControls extends View {
     private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG), line = new Paint(Paint.ANTI_ALIAS_FLAG), text = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Path path = new Path();
     private final RectF rect = new RectF();
-    private final Matrix gradientMatrix = new Matrix();
-    private LinearGradient glass, glassHeld, thumb, thumbHeld;
-    private float gradientOpacity = -1;
-    private final float[] corners = new float[8];
     private static final long[] DIRECTIONS = {UP, RIGHT, DOWN, LEFT};
 
     TouchControls(Context c, boolean input) {
@@ -209,7 +202,7 @@ final class TouchControls extends View {
         // a tablet) they stay where the thumbs are, in the bottom corners, instead of spreading over its height
         float y0 = Math.max(0, h - 380 * d), bh = h - y0;
         float bar = picX * w;   // the width of each letterbox bar
-        float rStick = 60 * d, rRight = 54 * d, rPad = 50 * d, rFace = 25 * d, rSh = 25 * d, rSmall = 17 * d, rClick = 17 * d, off = 1.65f * rFace;
+        float rStick = 42 * d, rRight = 42 * d, rPad = 48 * d, rFace = 25 * d, rSh = 25 * d, rSmall = 17 * d, rClick = 17 * d, off = 1.65f * rFace;
         n = 0;
         // Shoulders in the band's top corners, ZL / ZR outside, L / R inside, minus / plus next to them
         float shY = y0 + m + 0.7f * rSh;
@@ -564,62 +557,35 @@ final class TouchControls extends View {
         drawControls(c);
     }
 
-    private void updateGradients() {
-        if (gradientOpacity == opacity) return;
-        gradientOpacity = opacity;
-        glass = gradient(Color.argb(alpha(0.48f), 100, 112, 126), Color.argb(alpha(0.62f), 16, 20, 27));
-        glassHeld = gradient(Color.argb(alpha(0.9f), 110, 235, 150), Color.argb(alpha(0.9f), 15, 115, 65));
-        thumb = gradient(Color.argb(alpha(0.94f), 70, 78, 90), Color.argb(alpha(0.98f), 20, 24, 32));
-        thumbHeld = gradient(Color.argb(alpha(0.95f), 98, 180, 195), Color.argb(alpha(0.98f), 22, 49, 60));
+    private void surface(boolean held) {
+        fill.setColor(Color.argb(alpha(held ? 0.85f : 0.62f), 28, 28, 32));
     }
 
-    private static LinearGradient gradient(int top, int bottom) {
-        return new LinearGradient(0, -1, 0, 1, top, bottom, Shader.TileMode.CLAMP);
-    }
-
-    private void glassPaint(LinearGradient shader, float x, float y, float height) {
-        gradientMatrix.setScale(height, height);
-        gradientMatrix.postTranslate(x, y);
-        shader.setLocalMatrix(gradientMatrix);
-        fill.setColor(Color.WHITE);
-        fill.setShader(shader);
-    }
-
-    private void edge(boolean held) {
-        line.setColor(held ? Color.argb(alpha(1f), 105, 255, 160) : Color.argb(alpha(0.85f), 225, 237, 250));
-    }
-
-    private void drawGlassCircle(Canvas c, float x, float y, float rad, boolean held, LinearGradient shader) {
-        glassPaint(shader, x, y, rad);
-        c.drawCircle(x, y, rad, fill);
-        fill.setShader(null);
-        edge(held);
-        c.drawCircle(x, y, rad, line);
+    private void edge(boolean accent) {
+        line.setColor(accent ? Color.argb(alpha(0.95f), 174, 125, 235)
+                : Color.argb(alpha(0.72f), 185, 185, 190));
     }
 
     private void drawControls(Canvas c) {
-        updateGradients();
         for (int i = 0; i < n; i++) {
             boolean held = pressed[i] != 0;
             if (kind[i] == STICK) drawStick(c, i);
             else if (kind[i] == DPAD) drawDpad(c, i);
             else {
+                float rad = r[i], x = cx[i], y = cy[i];
+                surface(held);
+                edge(true);
                 if (shape[i] == SHAPE_SHOULDER) {
-                    float rad = r[i];
-                    rect.set(cx[i] - rad, cy[i] - rad * 0.62f, cx[i] + rad, cy[i] + rad * 0.62f);
-                    Arrays.fill(corners, rad * 0.30f);
-                    boolean left = buttons[i] == ZL || buttons[i] == L;
-                    int corner = left ? 0 : 2;
-                    corners[corner] = corners[corner + 1] = rad * 0.95f;
-                    path.reset(); path.addRoundRect(rect, corners, Path.Direction.CW);
-                    glassPaint(held ? glassHeld : glass, cx[i], cy[i], rad * 0.62f);
-                    c.drawPath(path, fill); fill.setShader(null); edge(held); c.drawPath(path, line);
+                    rect.set(x - rad, y - rad * 0.62f, x + rad, y + rad * 0.62f);
+                    c.drawRoundRect(rect, rad * 0.38f, rad * 0.38f, fill);
+                    c.drawRoundRect(rect, rad * 0.38f, rad * 0.38f, line);
                 } else {
-                    drawGlassCircle(c, cx[i], cy[i], r[i], held, held ? glassHeld : glass);
+                    c.drawCircle(x, y, rad, fill);
+                    c.drawCircle(x, y, rad, line);
                 }
                 text.setColor(Color.argb(alpha(1f), 255, 255, 255));
-                text.setTextSize(r[i] * (label[i].length() > 1 ? 0.68f : 0.88f));
-                c.drawText(label[i], cx[i], cy[i] - (text.descent() + text.ascent()) / 2, text);
+                text.setTextSize(rad * (label[i].length() > 1 ? 0.68f : 0.88f));
+                c.drawText(label[i], x, y - (text.descent() + text.ascent()) / 2, text);
             }
         }
     }
@@ -661,33 +627,45 @@ final class TouchControls extends View {
 
     private void drawStick(Canvas c, int i) {
         float sx = sticks[2 * stick[i]], sy = sticks[2 * stick[i] + 1];
-        boolean held = sx != 0 || sy != 0;
         float rr = r[i], x = cx[i], y = cy[i];
-        drawGlassCircle(c, x, y, rr, false, glass);
-        line.setColor(Color.argb(alpha(0.24f), 210, 225, 240));
-        c.drawCircle(x, y, rr * 0.68f, line);
-        rect.set(x - rr, y - rr, x + rr, y + rr);
-        line.setColor(Color.argb(alpha(held ? 1f : 0.65f), 75, 220, 245));
-        c.drawArc(rect, 22, 115, false, line);
-        float k = rr * 0.55f;
-        drawGlassCircle(c, x + sx * k, y - sy * k, rr * 0.45f, false, held ? thumbHeld : thumb);
+        surface(false);
+        edge(false);
+        c.drawCircle(x, y, rr, fill);
+        c.drawCircle(x, y, rr, line);
+        float k = rr * 0.43f;
+        float px = x + sx * k, py = y - sy * k;
+        fill.setColor(Color.argb(alpha(0.92f), 52, 52, 57));
+        edge(true);
+        c.drawCircle(px, py, rr * 0.57f, fill);
+        c.drawCircle(px, py, rr * 0.57f, line);
     }
 
     private void drawDpad(Canvas c, int i) {
-        float x = cx[i], y = cy[i], rr = r[i];
+        float x = cx[i], y = cy[i], rr = r[i], a = rr * 0.34f;
+        path.reset();
+        path.moveTo(x-a,y-rr); path.lineTo(x+a,y-rr);
+        path.lineTo(x+a,y-a); path.lineTo(x+rr,y-a);
+        path.lineTo(x+rr,y+a); path.lineTo(x+a,y+a);
+        path.lineTo(x+a,y+rr); path.lineTo(x-a,y+rr);
+        path.lineTo(x-a,y+a); path.lineTo(x-rr,y+a);
+        path.lineTo(x-rr,y-a); path.lineTo(x-a,y-a); path.close();
+        surface(false);
+        c.drawPath(path, fill);
+        edge(false);
+        c.drawPath(path, line);
         for (int k = 0; k < 4; k++) {
-            boolean held = (pressed[i] & DIRECTIONS[k]) != 0;
             c.save();
             c.rotate(90 * k, x, y);
-            rect.set(x - rr * 0.31f, y - rr * 0.94f, x + rr * 0.31f, y - rr * 0.22f);
-            glassPaint(held ? glassHeld : glass, x, y - rr * 0.58f, rr * 0.36f);
-            c.drawRoundRect(rect, rr * 0.22f, rr * 0.22f, fill);
-            fill.setShader(null); edge(held);
-            c.drawRoundRect(rect, rr * 0.22f, rr * 0.22f, line);
-            path.reset(); path.moveTo(x, y - rr * 0.76f);
-            path.lineTo(x + rr * 0.15f, y - rr * 0.48f);
-            path.lineTo(x - rr * 0.15f, y - rr * 0.48f); path.close();
-            fill.setColor(Color.argb(alpha(1f), 255, 255, 255)); c.drawPath(path, fill);
+            if ((pressed[i] & DIRECTIONS[k]) != 0) {
+                fill.setColor(Color.argb(alpha(0.55f), 28, 28, 32));
+                rect.set(x-a, y-rr, x+a, y-a);
+                c.drawRect(rect, fill);
+            }
+            path.reset(); path.moveTo(x, y - rr * 0.78f);
+            path.lineTo(x + rr * 0.13f, y - rr * 0.53f);
+            path.lineTo(x - rr * 0.13f, y - rr * 0.53f); path.close();
+            fill.setColor(Color.argb(alpha(1f), 255, 255, 255));
+            c.drawPath(path, fill);
             c.restore();
         }
     }
