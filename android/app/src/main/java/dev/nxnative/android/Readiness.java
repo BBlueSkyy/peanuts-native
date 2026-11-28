@@ -314,6 +314,17 @@ final class Readiness {
              .append(", descriptorIndexing=").append(f.getOrDefault("legacy.descriptorIndexing", "?"))
              .append(", bufferDeviceAddress=").append(f.getOrDefault("legacy.bufferDeviceAddress", "?"))
              .append(", synchronization2=").append(f.getOrDefault("legacy.synchronization2", "?"));
+        if (f.containsKey("legacy.imagelessFramebuffer")) {
+            s.append("; classic RP prerequisites: imageless=").append(f.get("legacy.imagelessFramebuffer"))
+             .append(", dynamicRenderingAdvertised=").append(f.getOrDefault("legacy.dynamicRenderingAdvertised", "?"))
+             .append(", extendedDynamicState=").append(f.getOrDefault("legacy.extendedDynamicState", "?"))
+             .append(", extendedDynamicState2=").append(f.getOrDefault("legacy.extendedDynamicState2", "?"))
+             .append("; guest memory: probeDevice=").append(f.getOrDefault("memory.probeDeviceResult", "?"))
+             .append(", placed=").append(f.getOrDefault("memory.placedUsable", "?"))
+             .append(" (").append(f.getOrDefault("memory.placedProbe", "not tested")).append(")")
+             .append(", fdAlias=").append(f.getOrDefault("memory.fdAlias", "?"))
+             .append(" (").append(f.getOrDefault("memory.fdAliasProbe", "not tested")).append(")");
+        }
         return s.toString();
     }
 
